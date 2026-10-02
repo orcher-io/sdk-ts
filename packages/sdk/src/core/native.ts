@@ -26,17 +26,20 @@ export const NATIVE_MODULE_PATH_ENV = 'ORCHER_NATIVE_MODULE';
 
 /**
  * The scope of the published packages that carry a prebuilt binding, one per
- * platform, named `@orcher/sdk-<platform>-<arch>[-<libc>]`. The SDK package
- * lists them all as optional dependencies, and each declares the `os`, `cpu`
- * and (on Linux) `libc` it runs on, so npm installs only the one that fits.
+ * platform, named `@orcher/sdk-<platform>-<arch>[-<libc>]`. The published SDK
+ * package lists them all as optional dependencies (added at publish time by
+ * `scripts/prepare-publish.js`, from `NATIVE_TARGETS`), and each declares the
+ * `os`, `cpu` and (on Linux) `libc` it runs on, so npm installs only the one
+ * that fits.
  */
 export const NATIVE_PACKAGE_SCOPE = '@orcher';
 
 /**
  * The platforms a prebuilt binding is published for.
  *
- * Keep in step with the platform packages under `npm/` (a test checks this)
- * and the build matrix in `.github/workflows/release.yml`.
+ * The published SDK's optionalDependencies are derived from this list. Keep it
+ * in step with the platform packages under `npm/` (a test checks this) and the
+ * build matrix in `.github/workflows/release.yml`.
  */
 export const NATIVE_TARGETS: readonly string[] = [
   'darwin-arm64',

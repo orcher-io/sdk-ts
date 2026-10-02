@@ -3,6 +3,9 @@
  * Pack @orcher/sdk and the platform package for this machine, install both
  * tarballs into a fresh project, and use them the way a consumer would:
  *
+ * - pack the SDK as it is published, with the platform packages added to its
+ *   package.json as optionalDependencies by prepare-publish.js, and check the
+ *   installed package lists every one at the SDK's version;
  * - type-check imports of `@orcher/sdk` and `@orcher/sdk/testing` under both
  *   the classic (`node`) and the Node 16+ (`nodenext`) module resolution;
  * - require both entry points from CommonJS and import them from ESM;
@@ -22,7 +25,10 @@ const os = require('os');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const { nativeTarget, isMusl } = require(path.join(root, 'dist/core/native.js'));
+const { nativeTarget, isMusl, NATIVE_TARGETS, NATIVE_PACKAGE_SCOPE } = require(
+  path.join(root, 'dist/core/native.js')
+);
+const { writePublishManifest } = require('./prepare-publish');
 
 const target = nativeTarget(process.platform, process.arch, isMusl());
 const platformDir = path.join(root, 'npm', target);
@@ -51,9 +57,18 @@ function pack(packageDir) {
 }
 
 const copied = path.join(platformDir, 'orcher_core.node');
+const manifest = path.join(root, 'package.json');
+const committedManifest = fs.readFileSync(manifest, 'utf8');
+const { version } = JSON.parse(committedManifest);
 fs.copyFileSync(binding, copied);
 try {
-  const sdk = pack(root);
+  writePublishManifest();
+  let sdk;
+  try {
+    sdk = pack(root);
+  } finally {
+    fs.writeFileSync(manifest, committedManifest);
+  }
   const native = pack(platformDir);
 
   const files = sdk.files.map((f) => f.path);
@@ -71,6 +86,9 @@ try {
     path.join(dir, 'package.json'),
     JSON.stringify({ name: 'orcher-sdk-smoke', version: '0.0.0', private: true }, null, 2)
   );
+  // The other platform packages of this version need not be on npm yet (they
+  // are published by the release this checks); npm skips optional
+  // dependencies it cannot fetch.
   run('npm', [
     'install',
     '--no-audit',
@@ -80,6 +98,21 @@ try {
     'typescript@5',
     '@types/node@20',
   ]);
+
+  const installed = JSON.parse(
+    fs.readFileSync(path.join(dir, 'node_modules/@orcher/sdk/package.json'), 'utf8')
+  );
+  // Every target in the loader, at exactly the SDK's version.
+  const expected = Object.fromEntries(
+    [...NATIVE_TARGETS].sort().map((t) => [`${NATIVE_PACKAGE_SCOPE}/sdk-${t}`, version])
+  );
+  if (JSON.stringify(installed.optionalDependencies) !== JSON.stringify(expected)) {
+    throw new Error(
+      `the packed SDK has optionalDependencies ${JSON.stringify(installed.optionalDependencies)}, ` +
+        `not ${JSON.stringify(expected)}`
+    );
+  }
+  console.log(`the packed SDK depends on ${Object.keys(expected).length} platform packages at ${version}`);
 
   fs.writeFileSync(
     path.join(dir, 'smoke.ts'),

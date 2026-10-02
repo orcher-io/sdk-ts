@@ -76,7 +76,8 @@ jobs:
         run: npm run type-check:tests --workspace packages/sdk
       - name: Test
         run: npm test --workspace packages/sdk
-      # Packs @orcher/sdk and this machine's platform package, installs both
+      # Packs @orcher/sdk as it is published (with its optionalDependencies on
+      # the platform packages) and this machine's platform package, installs both
       # tarballs into a new project and imports both entry points from
       # TypeScript, CommonJS and ESM, loading the binding and running a
       # workflow in memory.
