@@ -43,68 +43,8 @@
         },
         {
           "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-darwin-arm64']"
-        },
-        {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-darwin-x64']"
-        },
-        {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-linux-arm64-gnu']"
-        },
-        {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-linux-arm64-musl']"
-        },
-        {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-linux-x64-gnu']"
-        },
-        {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.optionalDependencies['@orcher/sdk-linux-x64-musl']"
-        },
-        {
-          "type": "json",
           "path": "/package-lock.json",
           "jsonpath": "$.packages['packages/sdk'].version"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-darwin-arm64']"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-darwin-x64']"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-linux-arm64-gnu']"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-linux-arm64-musl']"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-linux-x64-gnu']"
-        },
-        {
-          "type": "json",
-          "path": "/package-lock.json",
-          "jsonpath": "$.packages['packages/sdk'].optionalDependencies['@orcher/sdk-linux-x64-musl']"
         }
       ],
       "changelog-sections": [

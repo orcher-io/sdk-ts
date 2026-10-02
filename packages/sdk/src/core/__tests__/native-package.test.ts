@@ -1,9 +1,26 @@
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-import { NATIVE_TARGETS, nativePackageName, nativeTarget, isMusl } from '../native';
+import {
+  NATIVE_PACKAGE_SCOPE,
+  NATIVE_TARGETS,
+  nativePackageName,
+  nativeTarget,
+  isMusl,
+} from '../native';
 
 const packageRoot = join(__dirname, '../../..');
+
+// The script that lays out the packages for npm; it adds the platform
+// packages to the SDK's package.json at publish time.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { publishManifest } = require(join(packageRoot, 'scripts/prepare-publish.js')) as {
+  publishManifest: (
+    pkg: Record<string, any>,
+    targets: readonly string[],
+    scope: string
+  ) => Record<string, any>;
+};
 
 function readJson(path: string): Record<string, any> {
   return JSON.parse(readFileSync(path, 'utf8')) as Record<string, any>;
@@ -40,11 +57,23 @@ describe('platform packages', () => {
     expect(dirs).toEqual([...NATIVE_TARGETS].sort());
   });
 
-  it('lists every platform package as an optional dependency pinned to the SDK version', () => {
+  it('leaves the platform packages out of the committed package.json', () => {
+    // They are not on npm until the release that publishes them, and npm 11
+    // refuses `npm ci` when package.json names a dependency the lockfile
+    // cannot contain.
+    expect(main['optionalDependencies']).toBeUndefined();
+  });
+
+  it('publishes every platform package as an optional dependency pinned to the SDK version', () => {
+    const published = publishManifest(main, NATIVE_TARGETS, NATIVE_PACKAGE_SCOPE);
     const expected = Object.fromEntries(
       [...NATIVE_TARGETS].sort().map((t) => [`@orcher/sdk-${t}`, main['version']])
     );
-    expect(main['optionalDependencies']).toEqual(expected);
+    expect(published['optionalDependencies']).toEqual(expected);
+    expect(Object.keys(expected).map((name) => name.slice('@orcher/sdk-'.length))).toEqual(dirs);
+    // Nothing else changes.
+    const { optionalDependencies: _added, ...rest } = published;
+    expect(rest).toEqual(main);
   });
 
   it.each(NATIVE_TARGETS)('%s matches the SDK version and declares where it runs', (target) => {

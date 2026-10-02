@@ -5,17 +5,20 @@ name: Release
 # the release, and the jobs below build the native binding for every platform
 # and publish @orcher/sdk and its platform packages to npm.
 #
-# The version is in packages/sdk/package.json, in every platform package under
-# packages/sdk/npm/, and in the SDK's optionalDependencies pins on them;
-# release-please bumps all of them together (see release-please-config.json).
+# The version is in packages/sdk/package.json and in every platform package
+# under packages/sdk/npm/; release-please bumps all of them together (see
+# release-please-config.json). The SDK's optionalDependencies on the platform
+# packages are not committed: they name versions that reach npm only in the
+# release that publishes them, which the lockfile cannot hold, so
+# prepare-publish.js adds them, pinned to the SDK's version, before publishing.
 # Before 1.0, features and fixes bump the patch and a breaking change bumps
 # the minor.
 #
 # The first public version, 0.5.0, is published by running this workflow by
 # hand with `publish`, which also tags v0.5.0. Until that tag exists
-# release-please has no release to count from, so `bootstrap-sha` in its
-# config stops it from reading the private history before 0.5.0 as unreleased
-# changes.
+# release-please counts from the start of this repository, whose first commit
+# is the 0.5.0 snapshot; it is not a Conventional Commit, so it adds nothing to
+# the next release.
 #
 # Publishing authenticates with npm trusted publishing (OIDC), so no token is
 # stored, and every package gets a provenance attestation. An NPM_TOKEN secret
@@ -220,8 +223,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: packages/sdk/bindings
-      # Checks that every platform package and pin carries the SDK's version,
-      # puts each binding in its package and writes the README for npm.
+      # Checks that every platform package carries the SDK's version, puts
+      # each binding in its package, adds the platform packages to the SDK's
+      # package.json as optionalDependencies and writes the README for npm.
       - name: Lay out the packages
         run: node packages/sdk/scripts/prepare-publish.js packages/sdk/bindings
 

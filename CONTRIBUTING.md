@@ -92,10 +92,12 @@ version. `docs`, `refactor`, `test`, `ci` and `chore` commits do not trigger a
 release on their own.
 
 release-please keeps one pull request open with the next version and its
-changelog. The version lives in `packages/sdk/package.json`, in every platform
-package under `packages/sdk/npm/`, and in the SDK's `optionalDependencies`
-pins on them; release-please bumps them all together, and a unit test fails
-if they ever disagree. Merging the release pull request is the release: it
+changelog. The version lives in `packages/sdk/package.json` and in every
+platform package under `packages/sdk/npm/`; release-please bumps them all
+together, and a unit test fails if they ever disagree. The SDK's
+`optionalDependencies` on the platform packages are not committed:
+`packages/sdk/scripts/prepare-publish.js` adds them, pinned to the SDK's
+version, when the release is published. Merging the release pull request is the release: it
 tags `v<version>`, builds the binding for every platform and publishes the
 platform packages, then `@orcher/sdk`, to npm with provenance.
 
@@ -104,7 +106,8 @@ platform packages, then `@orcher/sdk`, to npm with provenance.
 Prebuilt bindings are published for macOS (arm64, x64) and Linux (x64, arm64;
 glibc 2.17 or later, and musl). To add a platform, add its package under
 `packages/sdk/npm/`, its name to `NATIVE_TARGETS` in
-`packages/sdk/src/core/native.ts`, its pins to `optionalDependencies` and
+`packages/sdk/src/core/native.ts` (which is also where the published SDK's
+`optionalDependencies` come from), its version to
 `release-please-config.json`, and a build to the `bindings` matrix in
 `.github/workflows/release.yml`.
 
