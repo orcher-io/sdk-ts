@@ -1,0 +1,20 @@
+node_modules/
+dist/
+**/target/
+*.node
+*.tsbuildinfo
+
+# Assembled at publish time by packages/sdk/scripts/prepare-publish.js
+packages/sdk/bindings/
+packages/sdk/README.md
+packages/sdk/npm/*/LICENSE
+
+.DS_Store
+Cargo.lock
+
+# Local cross-repo override (see packages/sdk/native/.cargo/config.example.toml)
+packages/sdk/native/.cargo/config.toml
+
+# Nx cache
+.nx/cache
+.nx/workspace-data

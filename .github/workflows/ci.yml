@@ -1,0 +1,84 @@
+name: CI
+
+# Runs on GitHub-hosted runners only. Pull requests from forks run here too,
+# so this workflow must never target a self-hosted runner or read secrets.
+#
+# The native binding is Rust built against crates from crates.io
+# (orcher-sdk-core, orcher-proto), so no job needs a token, git credentials or
+# protoc. The generated protocol code is committed; only regenerating it
+# (npm run proto:generate) needs protoc.
+#
+# There is no lint step: the package has an `eslint` script but the repository
+# has no ESLint configuration for it to run with.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Release pull requests are opened with the default token, which starts no
+  # workflows, so their CI is started by hand on the release branch.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per pull request: a new push cancels the run for the one before it.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts only pay off when the same files are rebuilt over and
+  # over on one machine; in CI they just make the target directory bigger.
+  CARGO_INCREMENTAL: 0
+  # `npm ci` runs the `prepare` script, which would install git hooks.
+  HUSKY: '0'
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux x64 and macOS arm64: the smoke test at the end installs the
+        # platform package for the machine it runs on, so each runner proves
+        # a different one. Node 22 and 24 are the supported LTS lines.
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/sdk/native
+
+      - run: npm ci
+
+      # The package's own scripts rather than the nx targets that wrap them:
+      # nx would serve a cached result for inputs it has seen before, and a
+      # gate that can pass without running is not a gate.
+      - name: Build the native binding
+        run: npm run build:native --workspace packages/sdk
+      - name: Build TypeScript
+        run: npm run build:ts --workspace packages/sdk
+      - name: Type-check
+        run: npm run type-check --workspace packages/sdk
+      # The tests are excluded from the check above. This covers every test file
+      # not on tsconfig.test.json's exclude list, so a wrong import in a test
+      # fails here rather than at run time.
+      - name: Type-check the tests
+        run: npm run type-check:tests --workspace packages/sdk
+      - name: Test
+        run: npm test --workspace packages/sdk
+      # Packs @orcher/sdk and this machine's platform package, installs both
+      # tarballs into a new project and imports both entry points from
+      # TypeScript, CommonJS and ESM, loading the binding and running a
+      # workflow in memory.
+      - name: Pack, install and import
+        run: npm run smoke-test --workspace packages/sdk

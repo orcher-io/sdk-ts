@@ -1,0 +1,264 @@
+name: Release
+
+# Every push to main is read as Conventional Commits. release-please keeps a
+# pull request open with the next version and its changelog; merging it tags
+# the release, and the jobs below build the native binding for every platform
+# and publish @orcher/sdk and its platform packages to npm.
+#
+# The version is in packages/sdk/package.json, in every platform package under
+# packages/sdk/npm/, and in the SDK's optionalDependencies pins on them;
+# release-please bumps all of them together (see release-please-config.json).
+# Before 1.0, features and fixes bump the patch and a breaking change bumps
+# the minor.
+#
+# The first public version, 0.5.0, is published by running this workflow by
+# hand with `publish`, which also tags v0.5.0. Until that tag exists
+# release-please has no release to count from, so `bootstrap-sha` in its
+# config stops it from reading the private history before 0.5.0 as unreleased
+# changes.
+#
+# Publishing authenticates with npm trusted publishing (OIDC), so no token is
+# stored, and every package gets a provenance attestation. An NPM_TOKEN secret
+# in the `npm` environment is used instead while a package has no trusted
+# publisher, which is only the case for its very first publish: a trusted
+# publisher is configured per package on npmjs.com, after the package exists.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the version in packages/sdk/package.json and tag it (first release, or to retry a failed publish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  HUSKY: '0'
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.release.outputs['packages/sdk--release_created'] }}
+      tag: ${{ steps.release.outputs['packages/sdk--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # One binding per platform package. macOS builds on macOS; every Linux
+  # binding is cross-compiled on one Ubuntu runner with zig as linker and C
+  # compiler (cargo-zigbuild), then loaded by Node in a container of its own
+  # platform before it is uploaded.
+  bindings:
+    name: binding (${{ matrix.target }})
+    needs: release-please
+    if: >-
+      always() &&
+      (needs.release-please.outputs.released == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish))
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-latest
+            rust_target: aarch64-apple-darwin
+            lib: liborcher_core.dylib
+          - target: darwin-x64
+            runner: macos-latest
+            rust_target: x86_64-apple-darwin
+            lib: liborcher_core.dylib
+          # `.2.17` is cargo-zigbuild's glibc floor for the link: the binding
+          # loads on any glibc from 2.17 on, not just the builder's.
+          - target: linux-x64-gnu
+            runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            zig_target: x86_64-unknown-linux-gnu.2.17
+            lib: liborcher_core.so
+            smoke_image: node:20-bookworm-slim
+            smoke_platform: linux/amd64
+          - target: linux-arm64-gnu
+            runner: ubuntu-latest
+            rust_target: aarch64-unknown-linux-gnu
+            zig_target: aarch64-unknown-linux-gnu.2.17
+            lib: liborcher_core.so
+            smoke_image: node:20-bookworm-slim
+            smoke_platform: linux/arm64
+          - target: linux-x64-musl
+            runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-musl
+            zig_target: x86_64-unknown-linux-musl
+            lib: liborcher_core.so
+            smoke_image: node:20-alpine
+            smoke_platform: linux/amd64
+          - target: linux-arm64-musl
+            runner: ubuntu-latest
+            rust_target: aarch64-unknown-linux-musl
+            zig_target: aarch64-unknown-linux-musl
+            lib: liborcher_core.so
+            smoke_image: node:20-alpine
+            smoke_platform: linux/arm64
+    env:
+      # musl links statically by default, and a statically linked target
+      # cannot produce a cdylib, which is the only thing this crate builds.
+      # Turning crt-static off gives a dynamically linked .so, which is what
+      # Node loads anyway. Target-scoped, so nothing else sees it.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=-crt-static
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=-crt-static
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/sdk/native
+          key: ${{ matrix.target }}
+
+      # zig and cargo-zigbuild come from PyPI, into a throwaway venv.
+      - uses: actions/setup-python@v5
+        if: matrix.zig_target
+        with:
+          python-version: '3.12'
+      - name: Install zig
+        if: matrix.zig_target
+        run: |
+          python -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --disable-pip-version-check ziglang cargo-zigbuild
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        env:
+          ZIG_TARGET: ${{ matrix.zig_target }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          if [ -n "$ZIG_TARGET" ]; then
+            cargo zigbuild --release --manifest-path packages/sdk/native/Cargo.toml --target "$ZIG_TARGET"
+          else
+            cargo build --release --manifest-path packages/sdk/native/Cargo.toml --target "$RUST_TARGET"
+          fi
+          mkdir -p out
+          cp "packages/sdk/native/target/$RUST_TARGET/release/${{ matrix.lib }}" out/orcher_core.node
+          file out/orcher_core.node
+
+      # Proves the binding loads in the Node it is published for, not only that
+      # it linked. The arm64 containers run under QEMU.
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.smoke_platform == 'linux/arm64'
+      - name: Load the binding (Linux)
+        if: matrix.smoke_image
+        run: |
+          docker run --rm --platform ${{ matrix.smoke_platform }} -v "$PWD/out:/b:ro" ${{ matrix.smoke_image }} \
+            node -e 'const m = require("/b/orcher_core.node"); console.log(process.platform, process.arch, "binding", m.version())'
+      - name: Load the binding (macOS arm64)
+        if: matrix.target == 'darwin-arm64'
+        run: node -e 'const m = require("./out/orcher_core.node"); console.log(process.platform, process.arch, "binding", m.version())'
+      # The hosted macOS runners are Apple silicon and cannot be relied on to
+      # run x64 Node, so the Intel binding is checked for its architecture.
+      - name: Check the binding's architecture (macOS x64)
+        if: matrix.target == 'darwin-x64'
+        run: test "$(lipo -archs out/orcher_core.node)" = x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: out/orcher_core.node
+          if-no-files-found: error
+
+  publish:
+    needs: [release-please, bindings]
+    if: always() && needs.bindings.result == 'success'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      # contents: write tags a manual publish; id-token: write is for trusted
+      # publishing and provenance.
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag || github.ref }}
+      # Trusted publishing needs Node 22.14 or later and npm 11.5.1 or later.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.5.1
+
+      - name: The tag must match the package version
+        if: needs.release-please.outputs.tag != ''
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          version="v$(node -p "require('./packages/sdk/package.json').version")"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match package version $version"
+            exit 1
+          fi
+
+      - run: npm ci
+      - name: Build TypeScript
+        run: npm run build:ts --workspace packages/sdk
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages/sdk/bindings
+      # Checks that every platform package and pin carries the SDK's version,
+      # puts each binding in its package and writes the README for npm.
+      - name: Lay out the packages
+        run: node packages/sdk/scripts/prepare-publish.js packages/sdk/bindings
+
+      # The platform packages go first and @orcher/sdk last, so the SDK never
+      # points at a binding that is not there yet. Versions already on npm are
+      # skipped, so a publish that failed halfway can be run again.
+      #
+      # npm uses trusted publishing when the package has a trusted publisher
+      # for this workflow, and otherwise the NPM_TOKEN secret.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The leading ./ matters: npm reads a bare `packages/sdk` as a GitHub
+          # owner/repo shorthand.
+          for dir in packages/sdk/npm/*/ packages/sdk/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            version=$(node -p "require('./${dir}package.json').version")
+            # Prints nothing, and still succeeds, when the version is not there.
+            if [ "$(npm view "$name@$version" version 2>/dev/null)" = "$version" ]; then
+              echo "$name@$version is already on npm; skipping."
+              continue
+            fi
+            if ! npm publish "./$dir" --provenance --access public 2>&1 | tee publish.log; then
+              grep -q "cannot publish over the previously published versions" publish.log || exit 1
+              echo "$name@$version was published concurrently; continuing."
+            fi
+          done
+
+      # A manual publish tags the version it published, so release-please
+      # starts the next changelog from it.
+      - name: Tag a manual publish
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./packages/sdk/package.json').version")
+          gh release view "v$version" >/dev/null 2>&1 ||
+            gh release create "v$version" --target "$GITHUB_SHA" --title "v$version" --notes "First public release on npm."

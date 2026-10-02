@@ -1,0 +1,72 @@
+[package]
+name = "orcher-core-native"
+version = "0.1.0"
+edition = "2021"
+authors = ["Orcher Contributors"]
+description = "Native Node.js bindings for the Orcher SDK core, via Neon"
+license = "Apache-2.0"
+repository = "https://github.com/orcher-io/sdk-ts"
+keywords = ["orcher", "workflow", "neon", "nodejs"]
+categories = ["api-bindings", "development-tools"]
+
+[lib]
+name = "orcher_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Neon: Node.js N-API bindings for Rust.
+neon = { version = "1.0", default-features = false, features = ["napi-6", "futures"] }
+
+# Orcher SDK Core and protocol types, from crates.io. To build against local
+# checkouts instead, see .cargo/config.example.toml.
+orcher-sdk-core = "0.8"
+orcher-proto = "0.1"
+
+# gRPC
+tonic = { version = "0.12", features = ["transport", "tls", "tls-native-roots"] }
+prost-types = { version = "0.13" }
+
+# Async runtime
+tokio = { version = "1.35", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+
+# Compression, used by the codec bindings
+flate2 = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Utilities
+once_cell = "1.19"
+
+[build-dependencies]
+neon-build = "0.1"
+
+[profile.release]
+# Fully optimized, with LTO and stripped symbols
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+# Unoptimized with debug info, for faster builds
+opt-level = 0
+debug = true
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+

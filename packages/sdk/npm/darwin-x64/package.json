@@ -1,0 +1,30 @@
+{
+  "name": "@orcher/sdk-darwin-x64",
+  "version": "0.5.0",
+  "description": "The @orcher/sdk native binding for macOS on Intel",
+  "license": "Apache-2.0",
+  "author": "ORCHER Contributors",
+  "homepage": "https://orcher.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orcher-io/sdk-ts.git",
+    "directory": "packages/sdk/npm/darwin-x64"
+  },
+  "main": "orcher_core.node",
+  "files": [
+    "orcher_core.node"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

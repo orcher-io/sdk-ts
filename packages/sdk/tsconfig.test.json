@@ -1,0 +1,58 @@
+// Type-checks the test files, which `tsconfig.json` deliberately excludes.
+//
+// Nothing type-checked the tests, so a wrong import in a test was invisible
+// until runtime — that is exactly how a suite constructing `InterceptorChain`
+// (which `index.ts` re-exports under a different name, so it resolved to
+// `undefined`) failed on every test with "not a constructor" rather than being
+// caught by the compiler.
+//
+// This is a ratchet, not a finished job. New and already-clean test files are
+// checked by DEFAULT. The `exclude` list below is 21 files carrying 361
+// pre-existing type errors — a visible backlog to shrink, not a permanent
+// exemption. Deleting an entry and fixing its errors is the unit of progress.
+//
+// Unused-local/parameter checks are off here: unused mock arguments are normal
+// in tests and are lint noise rather than a correctness signal.
+//
+//   npm run type-check:tests
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "node",
+      "jest"
+    ],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/__tests__/direct-bindings-integration.test.ts",
+    "src/__tests__/registry.test.ts",
+    "src/__tests__/retry-policy-surface.test.ts",
+    "src/__tests__/task-context.test.ts",
+    "src/__tests__/workflow-context-events.test.ts",
+    "src/__tests__/workflow-context-queries.test.ts",
+    "src/__tests__/workflow-context.test.ts",
+    "src/di/__tests__/actor-registry.test.ts",
+    "src/di/__tests__/container-integration.test.ts",
+    "src/di/__tests__/container.test.ts",
+    "src/di/__tests__/decorators-integration.test.ts",
+    "src/di/__tests__/inject.test.ts",
+    "src/di/__tests__/injectable.test.ts",
+    "src/di/__tests__/provider-factories.test.ts",
+    "src/di/__tests__/registry.test.ts",
+    "src/di/__tests__/task.test.ts",
+    "src/di/__tests__/tasks.test.ts",
+    "src/worker/__tests__/actor-executor.test.ts",
+    "src/worker/__tests__/service-di-integration.test.ts",
+    "src/worker/__tests__/task-executor.test.ts",
+    "src/worker/__tests__/task-flow.integration.test.ts"
+  ]
+}

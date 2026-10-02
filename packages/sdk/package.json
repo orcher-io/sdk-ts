@@ -1,0 +1,111 @@
+{
+  "name": "@orcher/sdk",
+  "version": "0.5.0",
+  "description": "ORCHER TypeScript SDK: crash-proof workflows, written as plain async TypeScript",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "testing": [
+        "dist/testing/index.d.ts"
+      ]
+    }
+  },
+  "license": "Apache-2.0",
+  "author": "ORCHER Contributors",
+  "homepage": "https://orcher.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orcher-io/sdk-ts.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/orcher-io/sdk-ts/issues"
+  },
+  "keywords": [
+    "orcher",
+    "workflow",
+    "orchestration",
+    "durable-execution",
+    "typescript",
+    "decorators",
+    "workflow-engine",
+    "saga-pattern"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=9.0.0"
+  },
+  "files": [
+    "dist",
+    "!dist/native",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:native && npm run build:ts",
+    "build:native": "cargo build --manifest-path=native/Cargo.toml --release && target=\"${CARGO_TARGET_DIR:-native/target}\" && (cp \"$target/release/liborcher_core.dylib\" native/orcher_core.node || cp \"$target/release/liborcher_core.so\" native/orcher_core.node) && mkdir -p dist/native && cp native/orcher_core.node dist/native/orcher_core.node",
+    "build:ts": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "clean": "rimraf dist native/target src/core/generated",
+    "proto:generate": "node scripts/generate-proto.js",
+    "test": "jest",
+    "test:unit": "jest --testPathPattern=\\.test\\.ts$",
+    "test:integration": "jest --testPathPattern=\\.integration\\.test\\.ts$",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "type-check": "tsc --noEmit",
+    "type-check:tests": "tsc --noEmit -p tsconfig.test.json",
+    "native:packages": "node scripts/prepare-publish.js",
+    "prepublishOnly": "npm run build:ts",
+    "smoke-test": "node scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "@protobuf-ts/runtime": "^2.11.1",
+    "@protobuf-ts/runtime-rpc": "^2.11.1",
+    "fast-glob": "^3.3.2",
+    "reflect-metadata": "^0.2.1",
+    "tslib": "^2.8.1"
+  },
+  "optionalDependencies": {
+    "@orcher/sdk-darwin-arm64": "0.5.0",
+    "@orcher/sdk-darwin-x64": "0.5.0",
+    "@orcher/sdk-linux-arm64-gnu": "0.5.0",
+    "@orcher/sdk-linux-arm64-musl": "0.5.0",
+    "@orcher/sdk-linux-x64-gnu": "0.5.0",
+    "@orcher/sdk-linux-x64-musl": "0.5.0"
+  },
+  "devDependencies": {
+    "@protobuf-ts/plugin": "^2.11.1",
+    "@types/node": "^20.10.6",
+    "cargo-cp-artifact": "^0.1.8",
+    "rimraf": "^5.0.5",
+    "ts-patch": "^3.3.0",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

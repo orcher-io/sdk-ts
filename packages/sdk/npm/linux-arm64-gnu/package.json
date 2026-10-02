@@ -1,0 +1,33 @@
+{
+  "name": "@orcher/sdk-linux-arm64-gnu",
+  "version": "0.5.0",
+  "description": "The @orcher/sdk native binding for Linux arm64 with glibc",
+  "license": "Apache-2.0",
+  "author": "ORCHER Contributors",
+  "homepage": "https://orcher.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orcher-io/sdk-ts.git",
+    "directory": "packages/sdk/npm/linux-arm64-gnu"
+  },
+  "main": "orcher_core.node",
+  "files": [
+    "orcher_core.node"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
