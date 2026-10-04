@@ -11,7 +11,7 @@
 <br />
 
 <div>
-  <a href="https://www.npmjs.com/package/@orcher/sdk"><img src="https://img.shields.io/npm/v/@orcher/sdk?style=flat-square&labelColor=0a0a0a&color=04B385&logo=npm&logoColor=white" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@orcher/sdk"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fregistry.npmjs.org%2F%40orcher%2Fsdk%2Flatest&query=%24.version&prefix=v&style=flat-square&labelColor=0a0a0a&color=04B385&logo=npm&logoColor=white&label=npm&cacheSeconds=600" alt="npm"></a>
   <a href="https://github.com/orcher-io/sdk-ts/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/orcher-io/sdk-ts/ci.yml?branch=main&style=flat-square&labelColor=0a0a0a&color=38BDF0&logo=github&logoColor=white&label=CI" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-04B385?style=flat-square&labelColor=0a0a0a" alt="Apache 2.0"></a>
 </div>
