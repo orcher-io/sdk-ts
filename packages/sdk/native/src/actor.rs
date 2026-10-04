@@ -592,8 +592,11 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
             .await
             .map_err(|e| format!("Failed to connect: {}", e))?;
 
+        let max = orcher_sdk_core::limits::default_max_message_bytes();
         let mut client =
-            orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel);
+            orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
+                .max_decoding_message_size(max)
+                .max_encoding_message_size(max);
 
         let request = RegisterHandlersRequest {
             service_id,
@@ -639,7 +642,11 @@ async fn get_actor_client(
         .connect()
         .await
         .map_err(|e| format!("Failed to connect actor client: {}", e))?;
-    let client = orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel);
+    // Actor state up to the configured message limit, not tonic's 4 MiB.
+    let max = orcher_sdk_core::limits::default_max_message_bytes();
+    let client = orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
+        .max_decoding_message_size(max)
+        .max_encoding_message_size(max);
     *guard = Some(client.clone());
     Ok(client)
 }
