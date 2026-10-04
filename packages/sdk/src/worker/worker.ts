@@ -1713,6 +1713,10 @@ export class Worker {
           commands: rustCommands,
           query_responses: queryResponses,
           update_results: updateResults,
+          // The steps the code reached, so sdk-core can tell code that no
+          // longer replays the run; an sdk-core that predates the field
+          // ignores it.
+          reached_steps: result.reachedSteps,
           error: result.error
             ? {
                 message: result.error.message || 'Unknown error',

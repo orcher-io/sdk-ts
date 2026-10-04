@@ -1370,20 +1370,15 @@ pub fn fail_workflow_task(mut cx: FunctionContext) -> JsResult<JsPromise> {
             .decode(&task_token)
             .map_err(|e| format!("Invalid task token: {}", e))?;
 
-        let exec_result = ExecutionResult {
-            run_id: execution_id.clone(),
-            successful: false,
-            commands: vec![],
-            query_responses: vec![],
-            update_results: vec![],
-            error: Some(orcher_sdk_core::bridge::ExecutionError {
+        let exec_result = ExecutionResult::failed(
+            execution_id.clone(),
+            orcher_sdk_core::bridge::ExecutionError {
                 message: error_message,
                 error_type: orcher_sdk_core::bridge::ExecutionErrorType::WorkflowCode,
                 details: None,
                 retryable: false,
-            }),
-            restart_fresh: None,
-        };
+            },
+        );
 
         let work_result = WorkflowWorkResult {
             workflow_id,
