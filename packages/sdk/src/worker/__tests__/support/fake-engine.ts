@@ -263,7 +263,7 @@ export function activation(run: (ctx: WorkflowContext, input: any) => Promise<un
     tasks: [],
     logger: silent,
   });
-  return async (engine: FakeEngine): Promise<Record<string, any>> =>
+  return async (engine: FakeEngine): Promise<any> =>
     (worker as any).executeWorkflowDirectBindings(engine.request());
 }
 
@@ -294,7 +294,7 @@ export function runner(run: (ctx: WorkflowContext, input: any) => Promise<unknow
 /** Throw as sdk-core would refuse the activation: a step the journal
  * recorded that the code did not reach, while it issues new work or ends the
  * workflow. */
-export function leftBehind(engine: FakeEngine, result: Record<string, any>): void {
+export function leftBehind(engine: FakeEngine, result: any): void {
   if (!Array.isArray(result.reached_steps)) {
     throw new Error('the activation does not report the steps it reached');
   }
