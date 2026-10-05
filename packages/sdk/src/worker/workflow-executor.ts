@@ -204,6 +204,7 @@ export class WorkflowExecutor {
       // including those of closures the workflow started and did not await.
       await context.closuresSettled();
       const stepCommands = context.takeCommands();
+      const reachedSteps = context.takeReachedSteps();
       this.logger.info(
         `[WF-EXEC] Extracted ${stepCommands.length} step commands from context for ${request.executionId}`
       );
@@ -272,6 +273,7 @@ export class WorkflowExecutor {
         result: serializedResult,
         duration,
         commands: stepCommands, // Step commands plus the terminal command
+        reachedSteps,
         context, // Exposed for query and update handler dispatch
       };
 
@@ -312,6 +314,7 @@ export class WorkflowExecutor {
         // its result is reported with this activation and it does not run again.
         await context.closuresSettled();
         const stepCommands = context.takeCommands();
+        const reachedSteps = context.takeReachedSteps();
         this.logger.info(
           `[WF-EXEC] Extracted ${stepCommands.length} commands for suspended workflow ${request.executionId}`
         );
@@ -337,6 +340,7 @@ export class WorkflowExecutor {
           result: null,
           duration,
           commands: stepCommands,
+          reachedSteps,
           suspended: true,
           context, // Exposed for query and update handler dispatch
         };
@@ -366,6 +370,7 @@ export class WorkflowExecutor {
         success: false,
         error: this.serializeError(error, request),
         duration,
+        reachedSteps: context.takeReachedSteps(),
         context, // Exposed for query and update handler dispatch
       };
 

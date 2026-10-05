@@ -712,6 +712,14 @@ export interface ExecutionResult {
   commands?: any[];
 
   /**
+   * The id of every step (task, timer, child workflow) the code reached in
+   * this activation, whether the journal already held its outcome or its
+   * command is in `commands`. sdk-core checks them against the steps the
+   * journal recorded to catch code that no longer replays the run.
+   */
+  reachedSteps?: string[];
+
+  /**
    * Workflow context from the execution.
    *
    * Exposed so the worker can dispatch query and update requests to handlers

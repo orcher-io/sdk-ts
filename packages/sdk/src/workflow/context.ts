@@ -566,6 +566,7 @@ export class WorkflowContext {
     // already completed.
     const sequence = this.nextSequence();
     const taskId = `${taskName}_${sequence}`;
+    this.reachStep(taskId);
 
     // A journaled result means the task already ran: return it instead of
     // scheduling the task again. This is what makes the task durable.
@@ -691,6 +692,7 @@ export class WorkflowContext {
     const sequence = this.nextSequence();
     const sessionId = `session_${sequence}`;
     const taskId = `${SESSION_CREATE_TASK}_${sequence}`;
+    this.reachStep(taskId);
 
     // On replay, the journaled session creation result is a serialized SessionInfo.
     if (this.state.pendingTaskResults.has(taskId)) {
@@ -905,6 +907,7 @@ export class WorkflowContext {
    * this check, so IDs stay in lockstep across replays.
    */
   private emitTimer(timerId: string, sequence: number, durationMs: number): void {
+    this.reachStep(timerId);
     if (this.state.pendingTaskResults.has(`timer:${timerId}`)) {
       this.observe(`timer:${timerId}`);
       return; // The timer has already fired
@@ -981,6 +984,7 @@ export class WorkflowContext {
     // consumed so ordering stays stable.
     const sequence = this.nextSequence();
     const workflowId = options?.workflowId || `child_${sequence}`;
+    this.reachStep(workflowId);
 
     // Emit StartChildWorkflow unless the child has already completed, in which
     // case its outcome is cached under `child:{id}`.
@@ -1085,6 +1089,7 @@ export class WorkflowContext {
     // it (informational only) so it does not consume values from ctx.random.
     const sequence = this.nextSequence();
     const workflowId = options?.workflowId || `child_${sequence}`;
+    this.reachStep(workflowId);
     const runId = `run_${workflowId}`;
 
     // Emit StartChildWorkflow unless the child has already completed. This does
@@ -1557,6 +1562,9 @@ export class WorkflowContext {
     // wait takes no number from the step counter on any path (see
     // `waitForEvent`).
     const timerId = this.eventTimeoutTimerId(eventName);
+    // Reached on every path, whichever of the event and the deadline wins:
+    // the journal holds this timer whenever an earlier activation parked here.
+    this.reachStep(timerId);
     const fired = this.state.pendingTaskResults.get(`timer:${timerId}`);
     const timerFired = this.state.pendingTaskResults.has(`timer:${timerId}`);
     // A fired-timer marker without a position is treated as later than any
@@ -1737,6 +1745,35 @@ export class WorkflowContext {
    */
   private addCommand(command: WorkflowCommand): void {
     this.state.commands.push(command);
+  }
+
+  /** The id of every step the code reached this activation, in order. */
+  private readonly reachedSteps: string[] = [];
+
+  /**
+   * Record that the code reached the step with this id: a task, a timer or a
+   * child workflow, whether its outcome is already in the journal or its
+   * command is issued now. sdk-core holds the activation to having reached
+   * every step the journal recorded, which is how it tells that the code no
+   * longer replays the run (see `takeReachedSteps`).
+   *
+   * @internal
+   */
+  reachStep(stepId: string): void {
+    this.reachedSteps.push(stepId);
+  }
+
+  /**
+   * The ids of the steps the code reached this activation, for the
+   * activation's result. sdk-core compares them with the steps the journal
+   * recorded: a recorded step left unreached by an activation that issues new
+   * work or ends the workflow is reported as non-determinism, and the
+   * activation is retried instead of applied.
+   *
+   * @internal Used by the executor
+   */
+  takeReachedSteps(): string[] {
+    return this.reachedSteps.splice(0);
   }
 
   /**

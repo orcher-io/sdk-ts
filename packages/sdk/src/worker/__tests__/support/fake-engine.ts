@@ -250,7 +250,9 @@ export function completion(commands: Array<Record<string, any>>): unknown {
   return JSON.parse(new TextDecoder().decode(new Uint8Array(data)));
 }
 
-export function runner(run: (ctx: WorkflowContext, input: any) => Promise<unknown>) {
+/** Run one activation of `run` against the journal as it is, and return
+ * the result the worker hands sdk-core, unchecked. */
+export function activation(run: (ctx: WorkflowContext, input: any) => Promise<unknown>) {
   const workflow = async (ctx: WorkflowContext, input: any) => run(ctx, input);
   Object.defineProperty(workflow, 'name', { value: 'under_test' });
   const worker = new Worker({
@@ -261,8 +263,14 @@ export function runner(run: (ctx: WorkflowContext, input: any) => Promise<unknow
     tasks: [],
     logger: silent,
   });
+  return async (engine: FakeEngine): Promise<any> =>
+    (worker as any).executeWorkflowDirectBindings(engine.request());
+}
+
+export function runner(run: (ctx: WorkflowContext, input: any) => Promise<unknown>) {
+  const activate = activation(run);
   return async (engine: FakeEngine): Promise<Array<Record<string, any>>> => {
-    const result = await (worker as any).executeWorkflowDirectBindings(engine.request());
+    const result = await activate(engine);
     if (!result.successful) {
       throw new Error(`the activation failed: ${result.error?.message}`);
     }
@@ -275,8 +283,44 @@ export function runner(run: (ctx: WorkflowContext, input: any) => Promise<unknow
         throw new Error(`step ${step[1]} reissued for other work: ${sameId} -> ${step.join('|')}`);
       }
     }
+    // And that it reached every step the journal recorded, if it issues new
+    // work or ends the workflow: the rule sdk-core holds an activation to,
+    // using the steps the activation reports it reached.
+    leftBehind(engine, result);
     return result.commands;
   };
+}
+
+/** Throw as sdk-core would refuse the activation: a step the journal
+ * recorded that the code did not reach, while it issues new work or ends the
+ * workflow. */
+export function leftBehind(engine: FakeEngine, result: any): void {
+  if (!Array.isArray(result.reached_steps)) {
+    throw new Error('the activation does not report the steps it reached');
+  }
+  const recorded = [
+    ...new Set(
+      engine.sent
+        .flatMap((c) => issuedSteps([c]))
+        .filter(([kind]) => kind !== 'closure')
+        .map(([, id]) => id)
+    ),
+  ];
+  const issued = issuedSteps(result.commands).filter(([kind]) => kind !== 'closure');
+  const reached = new Set<string>([...result.reached_steps, ...issued.map(([, id]) => id)]);
+  const newWork = issued.find(([, id]) => !recorded.includes(id));
+  const ends = result.commands.find(
+    (c: Record<string, unknown>) =>
+      'CompleteWorkflow' in c || 'FailWorkflow' in c || 'RestartFresh' in c
+  );
+  const left = recorded.filter((id) => !reached.has(id));
+  if ((newWork || ends || !result.successful) && left.length > 0) {
+    throw new Error(
+      `non-deterministic: recorded ${left.join(', ')} not reached, and the code ${
+        newWork ? `issued ${newWork.join(' ')}` : ends ? 'ended the workflow' : 'failed'
+      }`
+    );
+  }
 }
 
 /** Drive a workflow to completion, one activation per journal state. */
@@ -295,4 +339,3 @@ export async function runToCompletion(
   }
   throw new Error(`the workflow did not complete; it issued ${JSON.stringify(issued)}`);
 }
-
