@@ -1,6 +1,6 @@
 {
   "name": "@orcher/sdk-linux-arm64-musl",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "The @orcher/sdk native binding for Linux arm64 with musl (Alpine)",
   "license": "Apache-2.0",
   "author": "ORCHER Contributors",
