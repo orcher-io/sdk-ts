@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/orcher-io/sdk-ts/compare/v0.5.2...v0.5.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* say how a workflow ended, type zero-argument actor operations, and close six API gaps ([#10](https://github.com/orcher-io/sdk-ts/issues/10)) ([68065b3](https://github.com/orcher-io/sdk-ts/commit/68065b3ab164fdfee517aa2fb25273225c140d92))
+
 ## [0.5.2](https://github.com/orcher-io/sdk-ts/compare/v0.5.1...v0.5.2) (2026-10-05)
 
 
