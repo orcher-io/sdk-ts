@@ -1,5 +1,5 @@
 import { Saga } from '../saga';
-import { WorkflowError } from '../../errors';
+import { WorkflowError, ErrorCode, isWorkflowSuspension } from '../../errors';
 
 describe('Saga (imperative, converged shape)', () => {
   const log: string[] = [];
@@ -55,6 +55,58 @@ describe('Saga (imperative, converged shape)', () => {
     await expect(saga.addStep(suspending, comp('X'))).rejects.toBeInstanceOf(WorkflowError);
     // No compensation ran — suspension is control flow, not failure.
     expect(log).toEqual(['do:A', 'do:B']);
+  });
+
+  it('re-throws suspension from another copy of the SDK without compensating', async () => {
+    // A CommonJS and an ES module build loaded side by side each have their
+    // own WorkflowError class, so the signal is not an instanceof this one.
+    // It carries the same code, and the code is what makes it a suspension.
+    const foreignSuspension = Object.assign(new Error('Workflow suspended: scheduling'), {
+      code: ErrorCode.WORKFLOW_SUSPENDED,
+    });
+    const saga = new Saga();
+    await saga.addStep(act('A'), comp('A'));
+    await expect(
+      saga.addStep(async () => {
+        throw foreignSuspension;
+      }, comp('X'))
+    ).rejects.toBe(foreignSuspension);
+    expect(log).toEqual(['do:A']);
+    expect(saga.isCompleted).toBe(false);
+  });
+
+  it('re-throws suspension from a compensation so it can be scheduled', async () => {
+    const saga = new Saga();
+    await saga.addStep(act('A'), comp('A'));
+    saga.addCompensation(async () => {
+      throw WorkflowError.suspended('scheduling refund', []);
+    });
+    await expect(saga.compensate()).rejects.toMatchObject({
+      code: ErrorCode.WORKFLOW_SUSPENDED,
+    });
+    // The compensation before it in LIFO order waits for the replay.
+    expect(log).toEqual(['do:A']);
+  });
+
+  it('the documented try/catch leaves a suspended workflow uncompensated', async () => {
+    // The pattern from the Saga docs, around a step that suspends after one
+    // that completed: the catch sees the suspension and must re-throw it.
+    const saga = new Saga();
+    const run = async () => {
+      try {
+        await saga.addStep(act('hotel'), comp('hotel'));
+        await (async () => {
+          throw WorkflowError.suspended('scheduling charge', []);
+        })();
+        saga.commit();
+      } catch (err) {
+        if (isWorkflowSuspension(err)) throw err;
+        await saga.compensate();
+        throw err;
+      }
+    };
+    await expect(run()).rejects.toMatchObject({ code: ErrorCode.WORKFLOW_SUSPENDED });
+    expect(log).toEqual(['do:hotel']);
   });
 
   it('compensate() is idempotent', async () => {

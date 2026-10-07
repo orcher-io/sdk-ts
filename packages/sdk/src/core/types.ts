@@ -148,9 +148,13 @@ export interface ServiceConfig {
 }
 
 /**
- * Workflow start options
+ * The start options object the native binding reads.
+ *
+ * Internal to the binding. Callers start workflows with `Client.startWorkflow`,
+ * whose options are the `WorkflowStartOptions` the package exports; this type
+ * was once exported under that same name, which made the two easy to confuse.
  */
-export interface WorkflowStartOptions {
+export interface NativeWorkflowStartOptions {
   /**
    * Unique workflow ID
    */
@@ -537,7 +541,7 @@ export interface NativeModule {
    */
   clientStartWorkflow(
     client: NativeClientHandle,
-    options: WorkflowStartOptions
+    options: NativeWorkflowStartOptions
   ): NativeWorkflowHandle;
 
   /**

@@ -18,6 +18,8 @@
  *
  * @example
  * ```ts
+ * import { Saga, isWorkflowSuspension } from '@orcher/sdk';
+ *
  * // bookingTasks = createTaskRefs(BookingTasks), paymentTasks = createTaskRefs(PaymentTasks)
  * const saga = new Saga();
  * try {
@@ -33,6 +35,10 @@
  *
  *   saga.commit();
  * } catch (err) {
+ *   // `ctx.executeTask` suspends the workflow by throwing, and this `catch`
+ *   // sees that too. It is not a failure: re-throw it before compensating,
+ *   // or a healthy workflow undoes its own steps.
+ *   if (isWorkflowSuspension(err)) throw err;
  *   await saga.compensate();
  *   throw err;
  * }
@@ -41,7 +47,7 @@
  * @packageDocumentation
  */
 
-import { WorkflowError, ErrorCode } from '../errors';
+import { isWorkflowSuspension } from '../errors';
 
 /**
  * Whether a thrown value is the durable *suspension* signal rather than a real
@@ -50,10 +56,13 @@ import { WorkflowError, ErrorCode } from '../errors';
  * can schedule work and replay the workflow. Combinators that catch errors
  * (sagas, races, retries) MUST re-throw this untouched — never treat it as a
  * failed step.
+ *
+ * Matched by code, as {@link isWorkflowSuspension} does, not by class: a
+ * signal from a second copy of the SDK (a CommonJS and an ES module build
+ * loaded side by side) is not an `instanceof` this copy's `WorkflowError`,
+ * and taking it for a failure would compensate a healthy workflow.
  */
-function isSuspend(err: unknown): boolean {
-  return err instanceof WorkflowError && (err as { code?: unknown }).code === ErrorCode.WORKFLOW_SUSPENDED;
-}
+const isSuspend = isWorkflowSuspension;
 
 /** A registered compensation for a completed saga step. */
 interface Compensation {

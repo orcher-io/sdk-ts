@@ -8,12 +8,46 @@
  */
 
 import type { WorkflowFunction } from '../workflow/types';
+import type { WorkflowReference } from '../di/types';
 import { ExecutionTrace } from './trace';
 import { TestExecutor } from './executor';
 import { MockTaskRegistry, MockTaskInspector } from './mocks/task-registry';
 import { MockTaskBuilder } from './mocks/task-builder';
 import { TimeController } from './time/controller';
 import type { TestEnvOptions, TestWorkflowOptions, TestEnvStats } from './types';
+
+/**
+ * A workflow the test environment can run: a run function, or the reference
+ * `workflow({...})` returns.
+ */
+export type TestableWorkflow<TInput, TResult> =
+  | WorkflowFunction<[TInput], TResult>
+  | WorkflowReference<TInput, TResult>;
+
+/**
+ * The run function behind a workflow given as either form.
+ *
+ * A reference runs through the class `workflow()` generated for it, the same
+ * path a worker takes, so the test exercises what the worker would run.
+ */
+function runFunctionOf<TInput, TResult>(
+  workflow: TestableWorkflow<TInput, TResult>
+): WorkflowFunction<[TInput], TResult> {
+  if (typeof workflow === 'function') {
+    return workflow;
+  }
+  if (
+    typeof workflow === 'object' &&
+    workflow !== null &&
+    typeof workflow.workflowClass === 'function'
+  ) {
+    const WorkflowClass = workflow.workflowClass;
+    return (ctx, input) => new WorkflowClass().run(ctx, input);
+  }
+  throw new TypeError(
+    'executeWorkflow takes a workflow run function or the reference workflow({...}) returns'
+  );
+}
 
 /**
  * Test environment that runs workflows in memory.
@@ -136,7 +170,8 @@ export class TestWorkflowEnvironment {
    * The execution is recorded as a trace under `options.workflowId`, or under a
    * generated ID if none is given.
    *
-   * @param workflow - Workflow function to execute
+   * @param workflow - Workflow to execute: a run function, or the reference
+   *   `workflow({...})` returns
    * @param input - Workflow input
    * @param options - Execution options
    * @returns Workflow result
@@ -152,14 +187,15 @@ export class TestWorkflowEnvironment {
    * ```
    */
   async executeWorkflow<TInput, TResult>(
-    workflow: WorkflowFunction<[TInput], TResult>,
+    workflow: TestableWorkflow<TInput, TResult>,
     input: TInput,
     options: TestWorkflowOptions = {}
   ): Promise<TResult> {
+    const run = runFunctionOf(workflow);
     const startTime = Date.now();
 
     try {
-      const result = await this.executor.execute(workflow, input, {
+      const result = await this.executor.execute(run, input, {
         ...options,
         taskQueue: options.taskQueue ?? this.options.taskQueue,
         timeout: options.timeout ?? this.options.timeout,
@@ -182,7 +218,7 @@ export class TestWorkflowEnvironment {
    * Same as `executeWorkflow`; the name reads better when the test advances time
    * or does other work before awaiting the returned promise.
    *
-   * @param workflow - Workflow function
+   * @param workflow - Workflow: a run function, or the reference `workflow({...})` returns
    * @param input - Workflow input
    * @param options - Execution options
    * @returns Promise that resolves with workflow result
@@ -196,7 +232,7 @@ export class TestWorkflowEnvironment {
    * ```
    */
   startWorkflow<TInput, TResult>(
-    workflow: WorkflowFunction<[TInput], TResult>,
+    workflow: TestableWorkflow<TInput, TResult>,
     input: TInput,
     options: TestWorkflowOptions = {}
   ): Promise<TResult> {

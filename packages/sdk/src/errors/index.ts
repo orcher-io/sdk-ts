@@ -29,6 +29,7 @@ export enum ErrorCode {
   WORKFLOW_EXECUTION_FAILED = 'WORKFLOW_EXECUTION_FAILED',
   WORKFLOW_TIMEOUT = 'WORKFLOW_TIMEOUT',
   WORKFLOW_CANCELED = 'WORKFLOW_CANCELED',
+  WORKFLOW_TERMINATED = 'WORKFLOW_TERMINATED',
   WORKFLOW_NOT_FOUND = 'WORKFLOW_NOT_FOUND',
   WORKFLOW_ALREADY_EXISTS = 'WORKFLOW_ALREADY_EXISTS',
   WORKFLOW_PANIC = 'WORKFLOW_PANIC',
@@ -321,6 +322,148 @@ export class WorkflowError extends OrchestrationError {
       { reason, pendingOperations },
       ErrorSeverity.INFO
     );
+  }
+}
+
+/**
+ * What a workflow outcome error carries besides its message.
+ */
+export interface WorkflowOutcomeDetails {
+  /** The workflow whose result was awaited. */
+  workflowId: string;
+  /** The run, when the handle names one. */
+  runId?: string;
+}
+
+/**
+ * Base class of the errors `WorkflowHandle.result()` rejects with when the
+ * workflow ended without a result.
+ *
+ * Catch this for "the workflow did not complete", or one of its subclasses for
+ * how it ended: {@link WorkflowFailedError}, {@link WorkflowCanceledError},
+ * {@link WorkflowTerminatedError} or {@link WorkflowTimedOutError}. Each is a
+ * `WorkflowError`, and so an `OrcherError`, so existing `instanceof` checks
+ * keep matching.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await handle.result();
+ * } catch (err) {
+ *   if (err instanceof WorkflowFailedError) {
+ *     console.error(`Workflow failed: ${err.failure}`);
+ *   } else if (err instanceof WorkflowCanceledError) {
+ *     // canceled on purpose
+ *   } else {
+ *     throw err;
+ *   }
+ * }
+ * ```
+ */
+export class WorkflowOutcomeError extends WorkflowError {
+  /** The workflow whose result was awaited. */
+  public readonly workflowId: string;
+  /** The run, when the handle names one. */
+  public readonly runId?: string;
+
+  constructor(
+    message: string,
+    code: ErrorCode,
+    outcome: WorkflowOutcomeDetails,
+    details: Record<string, unknown> = {},
+    cause?: Error
+  ) {
+    super(message, code, { ...outcome, ...details });
+    this.name = 'WorkflowOutcomeError';
+    this.workflowId = outcome.workflowId;
+    this.runId = outcome.runId;
+    if (cause !== undefined) {
+      // `cause` is assigned by OrcherError's constructor, which this subtree
+      // does not reach with one.
+      (this as { cause?: Error }).cause = cause;
+    }
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * The workflow failed: its code threw, or the engine failed the run.
+ *
+ * Code `WORKFLOW_EXECUTION_FAILED`.
+ */
+export class WorkflowFailedError extends WorkflowOutcomeError {
+  /**
+   * The failure the server recorded for the run, usually the message of the
+   * error the workflow threw.
+   */
+  public readonly failure: string;
+
+  constructor(outcome: WorkflowOutcomeDetails, failure: string, cause?: Error) {
+    super(
+      `Workflow ${outcome.workflowId} failed: ${failure}`,
+      ErrorCode.WORKFLOW_EXECUTION_FAILED,
+      outcome,
+      { failure },
+      cause
+    );
+    this.name = 'WorkflowFailedError';
+    this.failure = failure;
+  }
+}
+
+/**
+ * The workflow was canceled, for example with `WorkflowHandle.cancel()`.
+ *
+ * Code `WORKFLOW_CANCELED`.
+ */
+export class WorkflowCanceledError extends WorkflowOutcomeError {
+  constructor(outcome: WorkflowOutcomeDetails, cause?: Error) {
+    super(
+      `Workflow ${outcome.workflowId} was canceled`,
+      ErrorCode.WORKFLOW_CANCELED,
+      outcome,
+      {},
+      cause
+    );
+    this.name = 'WorkflowCanceledError';
+  }
+}
+
+/**
+ * The workflow was terminated, for example with `WorkflowHandle.terminate()`.
+ *
+ * Code `WORKFLOW_TERMINATED`.
+ */
+export class WorkflowTerminatedError extends WorkflowOutcomeError {
+  constructor(outcome: WorkflowOutcomeDetails, cause?: Error) {
+    super(
+      `Workflow ${outcome.workflowId} was terminated`,
+      ErrorCode.WORKFLOW_TERMINATED,
+      outcome,
+      {},
+      cause
+    );
+    this.name = 'WorkflowTerminatedError';
+  }
+}
+
+/**
+ * The workflow ran past its execution timeout (`workflowExecutionTimeout`).
+ *
+ * Code `WORKFLOW_TIMEOUT`. Not to be confused with `TimeoutError`, which
+ * `resultWithTimeout()` throws when the caller stops waiting while the
+ * workflow keeps running.
+ */
+export class WorkflowTimedOutError extends WorkflowOutcomeError {
+  constructor(outcome: WorkflowOutcomeDetails, cause?: Error) {
+    super(
+      `Workflow ${outcome.workflowId} timed out`,
+      ErrorCode.WORKFLOW_TIMEOUT,
+      outcome,
+      {},
+      cause
+    );
+    this.name = 'WorkflowTimedOutError';
   }
 }
 

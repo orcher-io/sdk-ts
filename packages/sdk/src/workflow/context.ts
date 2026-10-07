@@ -21,7 +21,7 @@ import { EventManager, EventHelpers, type SendEventCommand } from './events';
 import { QueryManager, QueryHandler, QueryOptions, QueryHelpers } from './query';
 import { ChildWorkflowHandle, ChildWorkflowFailedError } from './child-handle';
 import type { TaskReference } from '../di/types';
-import { Duration } from './types';
+import { Duration, ParentClosePolicy } from './types';
 import type { RetryPolicy } from './types';
 import { WorkflowError, TASK_FAILED_SENTINEL_KEY } from '../errors';
 
@@ -86,7 +86,8 @@ export interface TaskExecuteOptions {
   /** Overall time the task is allowed to take. */
   timeout?: DurationInput;
   /** Maximum time between heartbeats before the task is considered failed.
-   * Omitted, heartbeat supervision is off. */
+   * Omitted, the heartbeat timeout declared on `task({ heartbeatTimeout })`
+   * applies; with neither, heartbeat supervision is off. */
   heartbeatTimeout?: DurationInput;
   /** How long the task may wait in its queue before a worker starts it.
    *
@@ -173,17 +174,11 @@ export interface RecordStepResultCommand extends WorkflowCommand {
 // package also exposes it as `ContextRetryPolicy`.
 export type { RetryPolicy };
 
-/**
- * What happens to a child workflow when its parent closes.
- */
-export enum ParentClosePolicy {
-  /** Terminate child workflows when parent closes */
-  TERMINATE = 'TERMINATE',
-  /** Request cancellation of child workflows when parent closes */
-  REQUEST_CANCEL = 'REQUEST_CANCEL',
-  /** Abandon child workflows (let them continue) when parent closes */
-  ABANDON = 'ABANDON',
-}
+// One enum for the policy, defined beside the other workflow types. Two
+// enums under one name were not assignable to each other, so the one the
+// package root exported could not be passed to the context's child workflow
+// calls.
+export { ParentClosePolicy };
 
 /**
  * Child workflow options
@@ -605,7 +600,9 @@ export class WorkflowContext {
 
     // Timeout precedence: this call's option, then the timeout declared on the
     // task (`@Task({ timeout })` or `task({ timeout })`), then the scheduler
-    // default. Heartbeat and queue timeouts come from this call only.
+    // default. The heartbeat timeout takes the same precedence, without a
+    // default: undeclared, heartbeat supervision is off. The queue timeout
+    // comes from this call only.
     if (options?.timeout !== undefined) {
       command.timeout = durationToMillis(options.timeout);
     } else if (taskRef.timeout !== undefined) {
@@ -613,6 +610,8 @@ export class WorkflowContext {
     }
     if (options?.heartbeatTimeout !== undefined) {
       command.heartbeatTimeoutMs = durationToMillis(options.heartbeatTimeout);
+    } else if (taskRef.heartbeatTimeout !== undefined) {
+      command.heartbeatTimeoutMs = taskRef.heartbeatTimeout;
     }
     if (options?.queueTimeout !== undefined) {
       command.queueTimeoutMs = durationToMillis(options.queueTimeout);

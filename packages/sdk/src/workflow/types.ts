@@ -247,20 +247,33 @@ export interface ChildWorkflowOptions {
 
 /**
  * What happens to a child workflow when its parent closes.
+ *
+ * The one enum for this, used by `ctx.executeChildWorkflow()` and
+ * `ctx.startChildWorkflow()` and exported from the package root. It is also
+ * exported as `ContextParentClosePolicy`, the same enum under an older name.
  */
 export enum ParentClosePolicy {
   /**
-   * Terminate the child workflow when parent closes
+   * Terminate the child workflow when the parent closes.
    */
   TERMINATE = 'TERMINATE',
 
   /**
-   * Cancel the child workflow when parent closes
+   * Request cancellation of the child workflow when the parent closes. The
+   * default.
    */
-  CANCEL = 'CANCEL',
+  REQUEST_CANCEL = 'REQUEST_CANCEL',
 
   /**
-   * Abandon the child workflow (let it continue)
+   * Request cancellation of the child workflow when the parent closes.
+   *
+   * @deprecated Use {@link ParentClosePolicy.REQUEST_CANCEL}; this is the same
+   * policy under the name a second, now merged, enum used.
+   */
+  CANCEL = 'REQUEST_CANCEL',
+
+  /**
+   * Abandon the child workflow: it keeps running after the parent closes.
    */
   ABANDON = 'ABANDON',
 }

@@ -36,12 +36,24 @@ import type { Type } from '../di/types';
 export type ActorRef<T> = {
   [K in keyof T as T[K] extends (ctx: any, ...args: any[]) => Promise<any>
     ? K
-    : never]: T[K] extends (ctx: any, input: infer I) => Promise<infer O>
-    ? (input: I) => Promise<O>
-    : T[K] extends (ctx: any) => Promise<infer O>
-      ? () => Promise<O>
-      : never;
+    : never]: T[K] extends (ctx: any, ...args: infer A) => Promise<infer O>
+    ? ActorOperation<A, O>
+    : never;
 };
+
+/**
+ * One operation as the client calls it, from the parameters that follow `ctx`.
+ *
+ * The parameter list is matched as a tuple rather than with
+ * `(ctx, input: infer I) => ...`: a `(ctx) => ...` method is assignable to that
+ * shape too, with `I` inferred as `unknown`, which would demand an argument the
+ * operation does not take. `[]` gives `() => Promise<O>`, `[I]` and `[I?]` keep
+ * the input as declared, and anything longer is not callable through the proxy,
+ * which sends one payload.
+ */
+type ActorOperation<A extends any[], O> = A extends [unknown?]
+  ? (...args: A) => Promise<O>
+  : never;
 
 /**
  * Sends an actor operation to the server. `Client` implements it.
