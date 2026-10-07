@@ -178,6 +178,9 @@ const result = await testEnv.executeWorkflow(
 const result = await testEnv.executeWorkflow(myWorkflow, input);
 ```
 
+`myWorkflow` is a run function `(ctx, input) => Promise<result>` or the reference
+`workflow({...})` returns.
+
 **Returns:** the workflow's return value, typed from the workflow function. If the
 workflow throws, `executeWorkflow` rejects with that error.
 

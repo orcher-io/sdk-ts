@@ -131,6 +131,7 @@
 // ============================================================================
 
 export { TestWorkflowEnvironment, createTestWorkflowEnvironment } from './environment';
+export type { TestableWorkflow } from './environment';
 
 // ============================================================================
 // Test Executor

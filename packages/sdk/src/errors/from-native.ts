@@ -15,7 +15,15 @@
 
 import { wrapError } from '../core/errors';
 import type { OrcherError } from '../core/errors';
-import { ErrorCode, WorkflowError } from './index';
+import {
+  ErrorCode,
+  WorkflowError,
+  WorkflowFailedError,
+  WorkflowCanceledError,
+  WorkflowTerminatedError,
+  WorkflowTimedOutError,
+} from './index';
+import type { WorkflowOutcomeDetails, WorkflowOutcomeError } from './index';
 
 /** What a wrapped client failure can be: a transport error or a workflow one. */
 type WrappedError = OrcherError | WorkflowError;
@@ -72,5 +80,87 @@ export function wrapWorkflowError(
 
     default:
       return wrapError(error, context);
+  }
+}
+
+const FAILED_PREFIX = 'Workflow execution failed: ';
+
+/**
+ * The failure the server recorded, from a `WORKFLOW_EXECUTION_FAILED` message:
+ * `[CODE] <context>: Workflow execution failed: <failure>`.
+ */
+function recordedFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const at = message.indexOf(FAILED_PREFIX);
+  return at === -1
+    ? message.replace(/^\[[^\]]*\]\s*/, '')
+    : message.slice(at + FAILED_PREFIX.length);
+}
+
+/**
+ * What the server records as the failure of a run that ended without failing.
+ *
+ * Read only when the run's status could not be: the status is what says how a
+ * run ended, and a workflow could throw an error with one of these messages.
+ */
+const ENDED_BY: Record<
+  string,
+  (outcome: WorkflowOutcomeDetails, cause: Error) => WorkflowOutcomeError
+> = {
+  'Workflow was canceled': (outcome, cause) => new WorkflowCanceledError(outcome, cause),
+  'Workflow was terminated': (outcome, cause) => new WorkflowTerminatedError(outcome, cause),
+  'Workflow execution timed out': (outcome, cause) => new WorkflowTimedOutError(outcome, cause),
+};
+
+/**
+ * Whether a native error from waiting for a result says the workflow ended
+ * without one, so its status is worth reading to say how.
+ */
+export function isWorkflowOutcomeFailure(error: unknown): boolean {
+  return tag(error)?.code === ErrorCode.WORKFLOW_EXECUTION_FAILED;
+}
+
+/**
+ * Wrap a native error from waiting for a workflow's result.
+ *
+ * A run that ended without a result becomes the subclass of
+ * `WorkflowOutcomeError` for how it ended. The server answers the wait with
+ * only a message, so `status` (the run's status, as `WorkflowHandle.status()`
+ * reads it) says which ending it was; without it, the messages the server
+ * records for the endings that are not failures are recognized. Anything else
+ * is wrapped as by {@link wrapWorkflowError}.
+ */
+export function wrapWorkflowResultError(
+  error: unknown,
+  outcome: WorkflowOutcomeDetails,
+  status?: string
+): WrappedError {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  switch (tag(error)?.code) {
+    case ErrorCode.WORKFLOW_CANCELED:
+      return new WorkflowCanceledError(outcome, cause);
+    case ErrorCode.WORKFLOW_TERMINATED:
+      return new WorkflowTerminatedError(outcome, cause);
+    case ErrorCode.WORKFLOW_EXECUTION_FAILED:
+      break;
+    default:
+      return wrapWorkflowError(error, 'Failed to get workflow result', outcome.workflowId);
+  }
+
+  const failure = recordedFailure(error);
+  switch (status) {
+    case 'FAILED':
+      return new WorkflowFailedError(outcome, failure, cause);
+    case 'CANCELLED':
+    case 'CANCELED':
+      return new WorkflowCanceledError(outcome, cause);
+    case 'TERMINATED':
+      return new WorkflowTerminatedError(outcome, cause);
+    case 'TIMED_OUT':
+      return new WorkflowTimedOutError(outcome, cause);
+    default: {
+      const endedBy = ENDED_BY[failure];
+      return endedBy ? endedBy(outcome, cause) : new WorkflowFailedError(outcome, failure, cause);
+    }
   }
 }

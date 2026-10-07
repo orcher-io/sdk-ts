@@ -79,20 +79,24 @@ export interface WorkflowStartOptions {
   retryPolicy?: Partial<RetryPolicy>;
 
   /**
-   * Non-indexed metadata attached to the workflow.
+   * **Not supported yet: passing it throws a `ClientError`.**
    *
-   * @deprecated Not supported yet. The wire carries this as `annotations`, but
-   * the SDK does not populate it, so passing this throws rather than being
-   * silently discarded.
+   * Reserved for non-indexed metadata attached to the workflow. The wire
+   * carries this as `annotations`, but the SDK does not send it yet, and
+   * refusing it is better than accepting and silently discarding it.
+   *
+   * @deprecated Not supported yet; passing it throws.
    */
   memo?: Record<string, unknown>;
 
   /**
-   * Indexed metadata for querying the workflow.
+   * **Not supported yet: passing it throws a `ClientError`.**
    *
-   * @deprecated Not supported yet. The wire carries this as `labels`, but the
-   * SDK does not populate it, so passing this throws rather than being silently
-   * discarded.
+   * Reserved for indexed metadata to query the workflow by. The wire carries
+   * this as `labels`, but the SDK does not send it yet, and refusing it is
+   * better than accepting and silently discarding it.
+   *
+   * @deprecated Not supported yet; passing it throws.
    */
   searchAttributes?: Record<string, unknown>;
 }

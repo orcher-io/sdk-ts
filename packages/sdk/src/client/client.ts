@@ -36,19 +36,19 @@ import { WorkflowHandle } from './workflow-handle';
  * that the SDK does not populate. Setting either is rejected, because silently
  * dropping a caller's metadata is worse than refusing it.
  */
-const UNSUPPORTED_START_OPTIONS: ReadonlyArray<[keyof WorkflowStartOptions, string]> = [
-  ['memo', 'memo is not plumbed through to the server yet'],
-  ['searchAttributes', 'searchAttributes is not plumbed through to the server yet'],
+const UNSUPPORTED_START_OPTIONS: ReadonlyArray<keyof WorkflowStartOptions> = [
+  'memo',
+  'searchAttributes',
 ];
 
 const REUSE_POLICIES: ReadonlyArray<string> = Object.values(WorkflowIdReusePolicy);
 
 function rejectUnsupportedStartOptions(options: WorkflowStartOptions): void {
-  for (const [key, detail] of UNSUPPORTED_START_OPTIONS) {
+  for (const key of UNSUPPORTED_START_OPTIONS) {
     if (options[key] !== undefined) {
       throw new ClientError(
-        `${detail}. Remove '${String(key)}' from the start options — ` +
-          `it would otherwise be accepted and discarded.`
+        `The '${String(key)}' start option is not supported yet: this SDK does not ` +
+          `send it to the server. Remove it from the start options.`
       );
     }
   }

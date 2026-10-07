@@ -64,7 +64,7 @@ import type {
 export function task<TInput, TOutput>(
   definition: TaskDefinition<TInput, TOutput>
 ): TaskReference<TInput, TOutput> {
-  const { name, execute, timeout, retryPolicy } = definition;
+  const { name, execute, timeout, heartbeatTimeout, retryPolicy } = definition;
 
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     throw new Error('task() requires a non-empty name');
@@ -101,6 +101,7 @@ export function task<TInput, TOutput>(
     handlerClass: HandlerClass,
     methodName,
     timeout,
+    heartbeatTimeout,
     retryPolicy,
   };
   registry.registerTask(name, taskMetadata);
@@ -114,6 +115,9 @@ export function task<TInput, TOutput>(
     // registered metadata, so it must be copied here or a declared `timeout`
     // is ignored at schedule time.
     timeout: taskMetadata.timeout,
+    // Read by `executeTask` from the reference too; without it a declared
+    // heartbeat timeout was accepted and the task ran unsupervised.
+    heartbeatTimeout: taskMetadata.heartbeatTimeout,
   };
 
   return ref;

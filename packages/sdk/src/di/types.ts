@@ -89,6 +89,8 @@ export interface TaskMetadata {
   handlerClass: Type<any>;
   methodName: string;
   timeout?: number;
+  /** Heartbeat timeout declared on `task({ heartbeatTimeout })`, in milliseconds. */
+  heartbeatTimeout?: number;
   retryPolicy?: RetryPolicy;
 }
 
@@ -156,6 +158,14 @@ export interface TaskReference<TInput = any, TOutput = any> {
    */
   timeout?: number;
 
+  /**
+   * Heartbeat timeout declared on `task({ heartbeatTimeout })`, in milliseconds.
+   *
+   * Carried on the reference for the same reason as `timeout`. A per-call
+   * `heartbeatTimeout` passed to `executeTask` takes precedence.
+   */
+  heartbeatTimeout?: number;
+
   /** Phantom field for type inference; not set at runtime */
   readonly _inputType?: TInput;
 
@@ -180,7 +190,13 @@ export interface TaskReference<TInput = any, TOutput = any> {
 export interface TaskDefinition<TInput = any, TOutput = any> {
   name: string;
   execute: (ctx: any, input: TInput) => Promise<TOutput>;
+  /** Overall time the task is allowed to take, in milliseconds. */
   timeout?: number;
+  /**
+   * Maximum time between heartbeats before the task is considered failed, in
+   * milliseconds. Omitted, heartbeat supervision is off. A `heartbeatTimeout`
+   * passed to `ctx.executeTask()` overrides it for that call.
+   */
   heartbeatTimeout?: number;
   retryPolicy?: RetryPolicy;
 }

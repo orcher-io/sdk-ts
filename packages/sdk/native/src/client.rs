@@ -573,7 +573,7 @@ pub fn get_workflow_result(mut cx: FunctionContext) -> JsResult<JsPromise> {
         let json_value: serde_json::Value = handle_clone
             .result()
             .await
-            .map_err(|e| crate::error_code::tagged(&e, "Failed to get workflow result"))?;
+            .map_err(|e| crate::error_code::tagged_result(&e, "Failed to get workflow result"))?;
 
         Ok(json_value)
     })

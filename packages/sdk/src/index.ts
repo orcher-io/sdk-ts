@@ -132,6 +132,13 @@ export {
   // `err instanceof OrcherError` holds for transport failures too.
   OrchestrationError,
   WorkflowError,
+  // What WorkflowHandle.result() rejects with when the workflow ended without
+  // a result, one class per ending.
+  WorkflowOutcomeError,
+  WorkflowFailedError,
+  WorkflowCanceledError,
+  WorkflowTerminatedError,
+  WorkflowTimedOutError,
   TaskError,
   WorkerError,
   SerializationError,
@@ -147,6 +154,7 @@ export {
   toOrcherError,
   wrapError,
 } from './errors/index';
+export type { WorkflowOutcomeDetails } from './errors/index';
 
 // The durable task retry policy is the one public `RetryPolicy`. The SDK has no
 // in-process retry helper, because durable workflows delegate retries to the engine.

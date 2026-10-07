@@ -21,7 +21,7 @@
 
 import type { WorkflowStartOptions } from '../client/types';
 import { WorkflowIdReusePolicy } from '../client/types';
-import type { WorkflowStartOptions as CoreWorkflowStartOptions } from '../core/types';
+import type { NativeWorkflowStartOptions as CoreWorkflowStartOptions } from '../core/types';
 
 // ---------------------------------------------------------------------------
 // Native module mock — shared by the handle and client blocks
@@ -120,6 +120,19 @@ describe('start options that cannot be honoured are rejected', () => {
     await expect(
       client.startWorkflow({ ...base, ...(extra as Partial<WorkflowStartOptions>) })
     ).rejects.toThrow(new RegExp(name));
+  });
+
+  it.each([
+    ['memo', { memo: { note: 'hi' } }],
+    ['searchAttributes', { searchAttributes: { customer: 'acme' } }],
+  ])('says plainly that %s is not supported', async (name, extra) => {
+    // "Not plumbed through" read as a bug in the caller's setup, not as a
+    // feature the SDK does not have.
+    await expect(
+      client.startWorkflow({ ...base, ...(extra as Partial<WorkflowStartOptions>) })
+    ).rejects.toThrow(
+      `The '${name}' start option is not supported yet: this SDK does not send it to the server.`
+    );
   });
 
   it('rejects a reuse policy it does not know rather than starting under another', async () => {

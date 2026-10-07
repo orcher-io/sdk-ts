@@ -21,6 +21,8 @@ pub fn code_for(error: &CoreError) -> &'static str {
         // to a workflow, so it keeps the transport spelling.
         CoreError::WorkflowNotFound { .. } => "WORKFLOW_NOT_FOUND",
         CoreError::WorkflowAlreadyExists { .. } => "WORKFLOW_ALREADY_EXISTS",
+        CoreError::WorkflowCancelled { .. } => "WORKFLOW_CANCELED",
+        CoreError::WorkflowTerminated { .. } => "WORKFLOW_TERMINATED",
         CoreError::Timeout { .. } => "TIMEOUT",
         CoreError::Transport(_) | CoreError::Connection(_) => "CONNECTION_FAILED",
         CoreError::Authentication(_) => "UNAUTHENTICATED",
@@ -65,6 +67,22 @@ pub fn tagged(error: &CoreError, context: &str) -> String {
         _ => String::new(),
     };
     format!("[{}{}] {}: {}", code_for(error), attributes, context, error)
+}
+
+/// Format an error from waiting for a workflow's result.
+///
+/// sdk-core reports every run that ended without a result (failed, canceled,
+/// terminated or timed out) as `WorkflowExecutionFailed`. The same variant
+/// means something else from an actor operation, so it is tagged here, where it
+/// can only be the workflow's own outcome, rather than in `code_for`. The
+/// TypeScript side reads the run's status to tell the four endings apart.
+pub fn tagged_result(error: &CoreError, context: &str) -> String {
+    match error {
+        CoreError::WorkflowExecutionFailed { .. } => {
+            tagged_as("WORKFLOW_EXECUTION_FAILED", error, context)
+        }
+        _ => tagged(error, context),
+    }
 }
 
 /// Tag a non-core error with an explicit code.

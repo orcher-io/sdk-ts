@@ -17,7 +17,7 @@ import {
   NativeClientHandle,
   NativeWorkflowHandle,
   WorkflowHandleOptions,
-  WorkflowStartOptions,
+  NativeWorkflowStartOptions,
 } from './types';
 
 /**
@@ -411,7 +411,7 @@ export class Client implements Disposable {
    * });
    * ```
    */
-  startWorkflow<T = unknown>(options: WorkflowStartOptions): WorkflowHandle<T> {
+  startWorkflow<T = unknown>(options: NativeWorkflowStartOptions): WorkflowHandle<T> {
     this.ensureConnected();
 
     try {

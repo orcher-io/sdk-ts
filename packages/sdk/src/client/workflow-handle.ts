@@ -6,7 +6,11 @@
 
 import { ClientError, TimeoutError } from '../core/errors';
 import { hasValidNameCharacters, NAME_RULE } from '../core/names';
-import { wrapWorkflowError } from '../errors/from-native';
+import {
+  isWorkflowOutcomeFailure,
+  wrapWorkflowError,
+  wrapWorkflowResultError,
+} from '../errors/from-native';
 import { getNativeModule } from '../core/native';
 import type { NativeWorkflowHandle, Disposable, WorkflowExecutionDescription } from '../core/types';
 import { WorkflowStatus } from '../core/types';
@@ -87,8 +91,17 @@ export class WorkflowHandle<T = unknown> implements Disposable {
   /**
    * Wait for the workflow to complete and return its result.
    *
+   * A workflow that ended without a result rejects with the subclass of
+   * `WorkflowOutcomeError` for how it ended. All of them are `WorkflowError`s
+   * and `OrcherError`s.
+   *
    * @returns Promise that resolves with the workflow result
-   * @throws {OrcherError} If the workflow fails or times out
+   * @throws {WorkflowFailedError} If the workflow failed; `failure` holds what the server recorded
+   * @throws {WorkflowCanceledError} If the workflow was canceled
+   * @throws {WorkflowTerminatedError} If the workflow was terminated
+   * @throws {WorkflowTimedOutError} If the workflow exceeded its execution timeout
+   * @throws {OrcherError} If the result could not be read, for example because
+   *   the workflow does not exist (`WorkflowError` with code `WORKFLOW_NOT_FOUND`)
    *
    * @example
    * ```typescript
@@ -105,8 +118,30 @@ export class WorkflowHandle<T = unknown> implements Disposable {
       const result = await nativeModule.workflowHandleGetResult(this.native);
       return result as T;
     } catch (err) {
-      throw wrapWorkflowError(err, 'Failed to get workflow result', this.workflowId);
+      throw await this.resultError(err);
     }
+  }
+
+  /**
+   * The error for a failed wait on the result.
+   *
+   * The server answers a run that ended without a result with only a message,
+   * so the run's status is read to say how it ended. If that read fails too,
+   * the error is still a `WorkflowOutcomeError`, chosen from the message.
+   */
+  private async resultError(err: unknown): Promise<Error> {
+    const outcome = this.runId
+      ? { workflowId: this.workflowId, runId: this.runId }
+      : { workflowId: this.workflowId };
+    let status: string | undefined;
+    if (isWorkflowOutcomeFailure(err)) {
+      try {
+        status = await getNativeModule().workflowHandleGetStatus(this.native);
+      } catch {
+        status = undefined;
+      }
+    }
+    return wrapWorkflowResultError(err, outcome, status);
   }
 
   /**
@@ -119,7 +154,8 @@ export class WorkflowHandle<T = unknown> implements Disposable {
    * @returns Promise that resolves with the workflow result
    * @throws {TimeoutError} If the workflow does not complete within the timeout
    * @throws {ClientError} If `timeoutMs` is not positive
-   * @throws {OrcherError} If the workflow fails
+   * @throws {WorkflowOutcomeError} If the workflow ended without a result; the
+   *   subclasses are those of {@link WorkflowHandle.result}
    *
    * @example
    * ```typescript
