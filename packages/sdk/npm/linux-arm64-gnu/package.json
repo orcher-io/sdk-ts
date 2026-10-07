@@ -1,6 +1,6 @@
 {
   "name": "@orcher/sdk-linux-arm64-gnu",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "The @orcher/sdk native binding for Linux arm64 with glibc",
   "license": "Apache-2.0",
   "author": "ORCHER Contributors",
