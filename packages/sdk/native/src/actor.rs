@@ -358,6 +358,7 @@ pub fn actor_get_state(mut cx: FunctionContext) -> JsResult<JsPromise> {
             key,
             state_key,
             execution_id,
+            ..Default::default()
         };
 
         let response = client
@@ -414,6 +415,7 @@ pub fn actor_set_state(mut cx: FunctionContext) -> JsResult<JsPromise> {
             value,
             execution_id,
             expected_version: String::new(),
+            ..Default::default()
         };
 
         let response = client
@@ -460,6 +462,7 @@ pub fn actor_delete_state(mut cx: FunctionContext) -> JsResult<JsPromise> {
             key,
             state_key,
             execution_id,
+            ..Default::default()
         };
 
         let response = client
@@ -516,6 +519,7 @@ pub fn actor_list_state_keys(mut cx: FunctionContext) -> JsResult<JsPromise> {
             key,
             execution_id,
             prefix: prefix.unwrap_or_default(),
+            ..Default::default()
         };
 
         let response = client
@@ -579,6 +583,7 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
                     operation: h["operation"].as_str().unwrap_or("").to_string(),
                     mode,
                     metadata: std::collections::HashMap::new(),
+                    ..Default::default()
                 }
             })
             .collect();
@@ -602,6 +607,7 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
             service_id,
             handlers: proto_handlers,
             metadata,
+            ..Default::default()
         };
 
         let response = client

@@ -156,6 +156,21 @@ export interface QueryOptions {
 }
 
 /**
+ * Options for cancelling a workflow.
+ */
+export interface CancelOptions {
+  /**
+   * How long the workflow may spend cleaning up after it observes the
+   * cancellation, after which the engine terminates it. A {@link Duration} or
+   * a number of milliseconds. Absent, there is no limit.
+   *
+   * Engines from before cancellation cleanup ignore it and end the run as
+   * cancelled at once.
+   */
+  cleanupTimeout?: DurationInput;
+}
+
+/**
  * Options for sending an event to a workflow.
  */
 export interface EventOptions {
