@@ -53,6 +53,12 @@ import {
   outliveHeartbeatTimeout,
   exitIfWorkerDoomed,
   crashMidTask,
+  cancelSleep,
+  cancelCleanupWorkflow,
+  cancelSaga,
+  cancelCleanup,
+  cancelReserve,
+  cancelRelease,
 } from './catalog';
 import { execSync, spawn, type ChildProcess } from 'child_process';
 
@@ -518,6 +524,61 @@ async function runEventScenario(
   return [true, ''];
 }
 
+/** Runs one cancellation scenario: starts the workflow, cancels it once it has
+ * parked, and asserts how it ended. `expect.status` is `cancelled` for a
+ * workflow that lets the cancellation it is told of end it, and `completed`,
+ * with `expect.result`, for one that cleans up and returns. */
+async function runCancelScenario(
+  client: Client,
+  taskQueue: string,
+  timeoutMs: number,
+  sc: Scenario
+): Promise<[boolean, string]> {
+  if (!sc.workflow || !sc.expect) return [false, 'cancel scenario missing `workflow`/`expect`'];
+
+  const key = `conf-${randomUUID()}`;
+  const input = { ...(isObject(sc.input) ? sc.input : {}), key };
+  const handle = await client.startWorkflow({ workflowType: sc.workflow, taskQueue, args: [input] });
+
+  if (!(await waitUntilParked(key, timeoutMs))) {
+    await handle.cancel().catch(() => undefined);
+    return [false, 'the workflow never parked'];
+  }
+  // As for an event: let the engine record the parking activation, so the
+  // cancellation wakes a parked workflow rather than racing its first run.
+  await sleep(500);
+  await handle.cancel();
+
+  if (sc.expect.status === 'cancelled') {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const status = String(await handle.status());
+      if (status === 'CANCELLED') return [true, ''];
+      if (status !== 'RUNNING' || Date.now() >= deadline) {
+        return [false, `expected the workflow cancelled, it is ${status}`];
+      }
+      await sleep(200);
+    }
+  }
+  if (sc.expect.status === 'completed') {
+    let result: unknown;
+    try {
+      result = await handle.resultWithTimeout(timeoutMs);
+    } catch (e) {
+      return [false, `expected completion after cleanup but the workflow failed: ${e}`];
+    }
+    if (result === null) return [false, 'timed out waiting for the workflow to finish cleaning up'];
+    if (!jsonMatches(sc.expect.result ?? {}, result)) {
+      return [
+        false,
+        `result mismatch\n    expected: ${JSON.stringify(sc.expect.result)}\n    actual:   ${JSON.stringify(result)}`,
+      ];
+    }
+    return [true, ''];
+  }
+  return [false, `unknown expected status '${sc.expect.status}' for a cancel scenario`];
+}
+
 /** Runs one engine-restart scenario: restarts the engine with the command in
  * `ORCHER_CONTRACT_RESTART_CMD`, then starts a workflow and expects the worker,
  * untouched, to pick it up and complete it.
@@ -713,6 +774,9 @@ async function main(): Promise<void> {
       waitForEventTimeout,
       outliveHeartbeatTimeout,
       crashMidTask,
+      cancelSleep,
+      cancelCleanupWorkflow,
+      cancelSaga,
     ],
     tasks: [
       alwaysFail,
@@ -724,6 +788,9 @@ async function main(): Promise<void> {
       timeoutsEchoTask,
       sleepPastHeartbeatTimeout,
       exitIfWorkerDoomed,
+      cancelCleanup,
+      cancelReserve,
+      cancelRelease,
     ],
   });
   try {
@@ -756,6 +823,8 @@ async function main(): Promise<void> {
       [ok, msg] = await runResetScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'event') {
       [ok, msg] = await runEventScenario(client, taskQueue, timeoutMs, sc);
+    } else if (sc.kind === 'cancel') {
+      [ok, msg] = await runCancelScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'engine_restart') {
       [ok, msg] = await runEngineRestartScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'worker_crash') {
