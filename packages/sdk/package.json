@@ -1,6 +1,6 @@
 {
   "name": "@orcher/sdk",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "ORCHER TypeScript SDK: crash-proof workflows, written as plain async TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

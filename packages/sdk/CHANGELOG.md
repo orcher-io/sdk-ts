@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/orcher-io/sdk-ts/compare/v0.5.3...v0.5.4) (2026-10-09)
+
+
+### Features
+
+* build on orcher-sdk-core 0.10, with a cleanup limit on cancellation ([#14](https://github.com/orcher-io/sdk-ts/issues/14)) ([cf3b8cf](https://github.com/orcher-io/sdk-ts/commit/cf3b8cff41a1589f85dcb92e73e6c0f635eb1046))
+
 ## [0.5.3](https://github.com/orcher-io/sdk-ts/compare/v0.5.2...v0.5.3) (2026-10-07)
 
 
