@@ -11,7 +11,9 @@ import {
   Duration,
   ExecutionErrorCode,
   Operation,
+  Saga,
   WorkflowError,
+  isWorkflowCancellation,
   task,
   workflow,
   type ActorContext,
@@ -526,4 +528,89 @@ export const exitIfWorkerDoomed = task<Record<string, never>, unknown>({
 export const crashMidTask = workflow<unknown, unknown>({
   name: 'crash_mid_task',
   run: async (ctx: WorkflowContext): Promise<unknown> => ctx.executeTask(exitIfWorkerDoomed, {}),
+});
+
+// ---------------------------------------------------------------------------
+// Cancellation: a cancelled workflow is told, once, and may clean up.
+// ---------------------------------------------------------------------------
+
+/** Cleanup long enough to be heartbeated. Reports whether it was told to stop:
+ * work started after a cancellation request is cleanup, and the engine must let
+ * it finish. */
+export const cancelCleanup = task<Record<string, never>, string>({
+  name: 'cancel_cleanup',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (ctx: TaskContext): Promise<string> => {
+    const started = Date.now();
+    while (Date.now() - started < 2_500) {
+      if (ctx.isCancelled()) return 'interrupted';
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return 'cleaned';
+  },
+});
+
+/** A step a saga can undo. */
+export const cancelReserve = task<Record<string, never>, string>({
+  name: 'cancel_reserve',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<string> => 'reserved',
+});
+
+/** Undoes `cancel_reserve`. */
+export const cancelRelease = task<Record<string, never>, string>({
+  name: 'cancel_release',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<string> => 'released',
+});
+
+/** Parks on a long sleep and lets the cancellation it is told of end it. */
+export const cancelSleep = workflow<{ key: string }, string>({
+  name: 'cancel_sleep',
+  run: async (ctx: WorkflowContext, input: { key: string }): Promise<string> => {
+    parkedWorkflows.add(input.key);
+    await ctx.sleep(Duration.fromMinutes(10));
+    return 'slept';
+  },
+});
+
+/** Parks on a long sleep; when told it is cancelled, runs cleanup and returns,
+ * which ends it completed. */
+export const cancelCleanupWorkflow = workflow<{ key: string }, unknown>({
+  name: 'cancel_cleanup',
+  run: async (ctx: WorkflowContext, input: { key: string }): Promise<unknown> => {
+    parkedWorkflows.add(input.key);
+    try {
+      await ctx.sleep(Duration.fromMinutes(10));
+    } catch (e) {
+      if (!isWorkflowCancellation(e)) throw e;
+      const cleanup = await ctx.executeTask(cancelCleanup, {});
+      return { told: ctx.isCancelRequested(), cleanup };
+    }
+    throw new Error('the sleep finished; the cancellation never arrived');
+  },
+});
+
+/** Reserves, then parks; when told it is cancelled, compensates the
+ * reservation and reports how many compensations ran. */
+export const cancelSaga = workflow<{ key: string }, unknown>({
+  name: 'cancel_saga',
+  run: async (ctx: WorkflowContext, input: { key: string }): Promise<unknown> => {
+    const saga = new Saga();
+    await saga.addStep(
+      () => ctx.executeTask(cancelReserve, {}),
+      () => ctx.executeTask(cancelRelease, {})
+    );
+    parkedWorkflows.add(input.key);
+    try {
+      await ctx.sleep(Duration.fromMinutes(10));
+    } catch (e) {
+      // Only the cancellation: suspension and anything else pass through, so
+      // the compensation runs because of the request and nothing else.
+      if (!isWorkflowCancellation(e)) throw e;
+      const compensated = await saga.compensate();
+      return { compensated };
+    }
+    throw new Error('the sleep finished; the cancellation never arrived');
+  },
 });
