@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/orcher-io/sdk-ts/compare/v0.5.4...v0.5.5) (2026-10-09)
+
+
+### Features
+
+* let a workflow clean up when it is cancelled ([#16](https://github.com/orcher-io/sdk-ts/issues/16)) ([dc6a9e8](https://github.com/orcher-io/sdk-ts/commit/dc6a9e8eb349f6067adde5365195d6359b2e86a5))
+
 ## [0.5.4](https://github.com/orcher-io/sdk-ts/compare/v0.5.3...v0.5.4) (2026-10-09)
 
 
