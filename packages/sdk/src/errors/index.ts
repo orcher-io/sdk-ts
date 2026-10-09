@@ -497,6 +497,34 @@ export function isWorkflowSuspension(err: unknown): boolean {
 }
 
 /**
+ * Whether `err` is a cancellation request delivered to the workflow: what a wait
+ * throws when the workflow is asked to cancel (see
+ * `WorkflowContext.isCancelRequested`).
+ *
+ * Catch it to clean up, then rethrow it to end the workflow as cancelled, or
+ * return to end it as completed. Compares the execution code, so it does not
+ * depend on which `ErrorCode` a caller imported: the package root exports the
+ * transport codes under that name.
+ *
+ * @example
+ * try {
+ *   await ctx.executeTask(tasks.ship, order);
+ * } catch (e) {
+ *   if (isWorkflowCancellation(e)) {
+ *     await ctx.executeTask(tasks.refund, order);
+ *   }
+ *   throw e;
+ * }
+ */
+export function isWorkflowCancellation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === ErrorCode.WORKFLOW_CANCELED
+  );
+}
+
+/**
  * An error raised during task execution.
  *
  * Covers failures, timeouts, cancellation, missed heartbeats, and exhausted retries.

@@ -1550,6 +1550,10 @@ export class Worker {
           if (cmdType === 'CANCEL_CHILD_WORKFLOW') {
             return { CancelChildWorkflow: { workflow_id: cmd.workflowId, run_id: '' } };
           }
+          // The workflow gave up on a cancellation request it was told of.
+          if (cmdType === 'CANCEL_WORKFLOW') {
+            return { CancelWorkflowExecution: { details: null } };
+          }
 
           // Create command data with snake_case field names for Rust
           const cmdData: any = {};
@@ -2074,8 +2078,19 @@ export class Worker {
           startedAtMs:
             typeof nativeTimes.started_at_ms === 'number' ? nativeTimes.started_at_ms : undefined,
           resolvedAt: nativeTimes.resolved_at ?? {},
+          cancelRequestedAt:
+            typeof nativeTimes.cancel_requested_at === 'number'
+              ? nativeTimes.cancel_requested_at
+              : undefined,
         }
       : undefined;
+    // A request to cancel the workflow. It is told at its first wait whose result
+    // the journal did not record before the request, by the journal's times: the
+    // engine adds step results after the journal's own entries, so where a job
+    // sits says nothing about when it happened.
+    const cancelRequested = ((nativeRequest.jobs as any[] | undefined) ?? []).some(
+      (job: any) => job?.CancelWorkflow !== undefined || job?.type === 'CancelWorkflow'
+    );
     // The n-th event of a name is the n-th journaled under it.
     const eventTimes = new Map<string, number[]>(
       Object.entries((nativeTimes?.events ?? {}) as Record<string, number[]>).map(
@@ -2324,6 +2339,7 @@ export class Worker {
       cachedStepResults,
       bufferedEvents,
       journalTimes,
+      cancelRequested,
     };
   }
 

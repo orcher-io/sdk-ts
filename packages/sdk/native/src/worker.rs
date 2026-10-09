@@ -136,6 +136,10 @@ impl ServiceConfig {
         config.api_key = self.api_key.clone();
         config.tls_config = self.tls_config.clone();
         config.version_id = self.version_id.clone();
+        // The TypeScript layer hands a cancellation request to workflow code
+        // (WorkflowContext.isCancelRequested), so the engine may wait for the
+        // workflow to clean up and end itself.
+        config.protocol_version = orcher_sdk_core::worker_protocol::CANCEL_REQUEST;
         config
     }
 
@@ -1009,6 +1013,7 @@ pub fn start(mut cx: FunctionContext) -> JsResult<JsPromise> {
             reg_config.heartbeat_interval = Duration::from_secs(10);
             reg_config.metadata = metadata;
             reg_config.version_id = config.version_id.clone();
+            reg_config.protocol_version = orcher_sdk_core::worker_protocol::CANCEL_REQUEST;
             // Registration talks to the same server as the pollers, so it needs the same
             // TLS settings and credentials. Without them it would dial a TLS server in
             // plaintext, or connect unauthenticated, and the only trace would be "Worker
