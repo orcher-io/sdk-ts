@@ -255,7 +255,8 @@ export class WorkflowExecutor {
         (cmd) =>
           cmd.type === WorkflowCommandType.COMPLETE_WORKFLOW ||
           cmd.type === WorkflowCommandType.FAIL_WORKFLOW ||
-          cmd.type === WorkflowCommandType.RESTART_FRESH
+          cmd.type === WorkflowCommandType.RESTART_FRESH ||
+          cmd.type === WorkflowCommandType.CANCEL_WORKFLOW
       );
       if (!alreadyTerminal) {
         const completeWorkflowCommand = {
@@ -294,6 +295,33 @@ export class WorkflowExecutor {
       // override work the workflow has already scheduled.
       const isSuspend =
         error instanceof WorkflowError && (error as any).code === ErrorCode.WORKFLOW_SUSPENDED;
+      // The cancellation the workflow was told of, not caught: it ends as
+      // cancelled, with whatever cleanup it issued before giving up. Suspension
+      // still wins if the activation also scheduled work (see below).
+      const toldAndNotCaught =
+        error instanceof WorkflowError &&
+        (error as any).code === ErrorCode.WORKFLOW_CANCELED &&
+        context.isCancelRequested();
+      if (toldAndNotCaught && !context.wasSuspensionRequested()) {
+        this.logger.info(`[WF-EXEC] Workflow ended as cancelled: ${request.type} (${request.executionId})`);
+        await context.closuresSettled();
+        const stepCommands = context.takeCommands();
+        const reachedSteps = context.takeReachedSteps();
+        const maxSequence =
+          stepCommands.length > 0 ? Math.max(...stepCommands.map((cmd) => cmd.sequence || 0)) : -1;
+        stepCommands.push({
+          type: WorkflowCommandType.CANCEL_WORKFLOW,
+          sequence: maxSequence + 1,
+        } as any);
+        return {
+          executionId: request.executionId,
+          success: true,
+          duration,
+          commands: stepCommands,
+          reachedSteps,
+          context,
+        } as any;
+      }
       if (isSuspend || context.wasSuspensionRequested()) {
         if (!isSuspend) {
           this.logger.warn(
@@ -443,6 +471,9 @@ export class WorkflowExecutor {
     );
     if (request.journalTimes) {
       context.recordResolvedAt(request.journalTimes.resolvedAt);
+    }
+    if (request.cancelRequested) {
+      context.noteCancelRequested(request.journalTimes?.cancelRequestedAt);
     }
 
     // Cached step results let the replaying workflow reuse recorded task and closure

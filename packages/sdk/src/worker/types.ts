@@ -598,6 +598,9 @@ export interface ExecutionRequest {
    * the moment the context is created.
    */
   journalTimes?: JournalTimes;
+  /** Whether the journal holds a request to cancel the workflow; see
+   * `WorkflowContext.isCancelRequested`. */
+  cancelRequested?: boolean;
 }
 
 /**
@@ -609,6 +612,8 @@ export interface JournalTimes {
   /** When each result was journaled, keyed as the workflow context holds it:
    * a step's id, `timer:{id}`, `child:{workflow id}`. */
   resolvedAt: Record<string, number>;
+  /** When a request to cancel the workflow was journaled. */
+  cancelRequestedAt?: number;
 }
 
 /**

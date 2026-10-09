@@ -66,6 +66,8 @@ export enum WorkflowCommandType {
   FAIL_WORKFLOW = 'FAIL_WORKFLOW',
   RESTART_FRESH = 'RESTART_FRESH',
   SEND_EVENT = 'SEND_EVENT',
+  /** End the workflow as cancelled: a cancellation request it was told of, not caught. */
+  CANCEL_WORKFLOW = 'CANCEL_WORKFLOW',
 }
 
 /**
@@ -562,6 +564,7 @@ export class WorkflowContext {
     const sequence = this.nextSequence();
     const taskId = `${taskName}_${sequence}`;
     this.reachStep(taskId);
+    this.cancellationFor(taskId);
 
     // A journaled result means the task already ran: return it instead of
     // scheduling the task again. This is what makes the task durable.
@@ -692,6 +695,7 @@ export class WorkflowContext {
     const sessionId = `session_${sequence}`;
     const taskId = `${SESSION_CREATE_TASK}_${sequence}`;
     this.reachStep(taskId);
+    this.cancellationFor(taskId);
 
     // On replay, the journaled session creation result is a serialized SessionInfo.
     if (this.state.pendingTaskResults.has(taskId)) {
@@ -907,6 +911,7 @@ export class WorkflowContext {
    */
   private emitTimer(timerId: string, sequence: number, durationMs: number): void {
     this.reachStep(timerId);
+    this.cancellationFor(`timer:${timerId}`);
     if (this.state.pendingTaskResults.has(`timer:${timerId}`)) {
       this.observe(`timer:${timerId}`);
       return; // The timer has already fired
@@ -1022,6 +1027,7 @@ export class WorkflowContext {
    */
   resolveChildWorkflowResult<T = any>(workflowType: string, workflowId: string): T {
     const cacheKey = `child:${workflowId}`;
+    this.cancellationFor(cacheKey);
     if (this.state.pendingTaskResults.has(cacheKey)) {
       this.observe(cacheKey);
       const cached = this.state.pendingTaskResults.get(cacheKey);
@@ -1481,6 +1487,13 @@ export class WorkflowContext {
   async waitForEvent<T = any>(eventName: string): Promise<T> {
     EventHelpers.validateEventName(eventName);
 
+    // The oldest event of this name is received if the journal recorded it before
+    // any cancellation request; otherwise the request is delivered here.
+    this.cancellationAt(
+      this.eventManager.getBuffer().has(eventName),
+      this.bufferedEventTimes.get(eventName)?.[0]
+    );
+
     // If event is already buffered (replay path), return it immediately.
     if (this.eventManager.getBuffer().has(eventName)) {
       return this.takeBufferedEvent(eventName) as T;
@@ -1566,6 +1579,23 @@ export class WorkflowContext {
     this.reachStep(timerId);
     const fired = this.state.pendingTaskResults.get(`timer:${timerId}`);
     const timerFired = this.state.pendingTaskResults.has(`timer:${timerId}`);
+    // This wait's result is the event or the deadline, whichever the journal
+    // recorded first; if neither came before a cancellation request, the request
+    // is delivered here.
+    {
+      const received: Array<number | undefined> = [];
+      if (this.eventManager.getBuffer().has(eventName)) {
+        received.push(this.bufferedEventTimes.get(eventName)?.[0]);
+      }
+      if (timerFired) {
+        received.push(this.resolvedAt.get(`timer:${timerId}`));
+      }
+      const known = received.filter((at): at is number => at !== undefined);
+      this.cancellationAt(
+        received.length > 0,
+        known.length > 0 && known.length === received.length ? Math.min(...known) : undefined
+      );
+    }
     // A fired-timer marker without a position is treated as later than any
     // event, so a buffered event still wins.
     const firedAt =
@@ -1900,6 +1930,71 @@ export class WorkflowContext {
 
   /** When each result was journaled; see `recordResolvedAt`. */
   private readonly resolvedAt = new Map<string, number>();
+
+  /** Whether the journal holds a request to cancel the workflow. */
+  private cancelRequested = false;
+
+  /** When the journal recorded that request, ms since the epoch, when known. */
+  private cancelRequestedAt: number | undefined;
+
+  /**
+   * Whether the code has been told of the request. It is told once, at the first
+   * wait whose result the journal did not record before the request: the same
+   * wait on every replay, since the code's order and the journal's times are
+   * both fixed.
+   */
+  private cancelDelivered = false;
+
+  /**
+   * Whether the workflow has been told it is being cancelled.
+   *
+   * True from the wait at which the code learned of the request onwards: that
+   * wait threw a `WorkflowError` with code `WORKFLOW_CANCELED` (test for it with
+   * `isWorkflowCancellation`), and everything after it is the workflow's
+   * cleanup, which runs normally. A long loop that does
+   * not wait can check this to stop early. Read from the journal, so it answers
+   * the same at the same point on every replay.
+   */
+  isCancelRequested(): boolean {
+    return this.cancelDelivered;
+  }
+
+  /**
+   * The journal holds a request to cancel the workflow, recorded at `atMs` (ms
+   * since the epoch) when known.
+   *
+   * @internal Used by the executor before the workflow runs
+   */
+  noteCancelRequested(atMs: number | undefined): void {
+    this.cancelRequested = true;
+    this.cancelRequestedAt = atMs;
+  }
+
+  /**
+   * Throw the cancellation here if this wait is where the code learns of the
+   * request: one has come, the code has not been told, and this wait's result
+   * (`present`, recorded at `atMs` if known) was not recorded before it. A result
+   * recorded no later than the request is received; one with no known time is
+   * too, since it exists.
+   */
+  private cancellationAt(present: boolean, atMs: number | undefined): void {
+    if (!this.cancelRequested || this.cancelDelivered) {
+      return;
+    }
+    if (present) {
+      const requestedAt = this.cancelRequestedAt;
+      if (atMs === undefined || requestedAt === undefined || atMs <= requestedAt) {
+        return;
+      }
+    }
+    this.cancelDelivered = true;
+    throw WorkflowError.canceled();
+  }
+
+  /** As `cancellationAt`, for the result held under `key`. */
+  private cancellationFor(key: string): void {
+    this.cancellationAt(this.state.pendingTaskResults.has(key), this.resolvedAt.get(key));
+  }
 
   /**
    * The workflow received what was journaled under `key`: its clock moves to

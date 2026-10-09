@@ -151,6 +151,7 @@ export {
   isClientError,
   isWorkerError,
   isWorkflowSuspension,
+  isWorkflowCancellation,
   toOrcherError,
   wrapError,
 } from './errors/index';
