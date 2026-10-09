@@ -14,6 +14,8 @@ import {
 import { getNativeModule } from '../core/native';
 import type { NativeWorkflowHandle, Disposable, WorkflowExecutionDescription } from '../core/types';
 import { WorkflowStatus } from '../core/types';
+import type { CancelOptions } from './types';
+import { durationToMillis } from '../workflow/types';
 
 /**
  * Validation and serialization for event, query, and update names and payloads.
@@ -275,19 +277,36 @@ export class WorkflowHandle<T = unknown> implements Disposable {
    * The workflow may handle cancellation gracefully or ignore it. Use
    * {@link WorkflowHandle.terminate} to stop it unconditionally.
    *
+   * @param options - `cleanupTimeout` limits how long the workflow may spend
+   *   cleaning up before the engine terminates it (a {@link Duration} or
+   *   milliseconds). Engines from before cancellation cleanup ignore it and
+   *   cancel at once.
+   * @throws {ClientError} If `cleanupTimeout` is negative or not a finite number
    * @throws {OrcherError} If the cancellation request fails
    *
    * @example
    * ```typescript
    * await handle.cancel();
+   * await handle.cancel({ cleanupTimeout: Duration.fromSeconds(30) });
    * ```
    */
-  async cancel(): Promise<void> {
+  async cancel(options: CancelOptions = {}): Promise<void> {
     this.ensureNotDisposed();
+
+    const cleanupTimeout =
+      options.cleanupTimeout === undefined ? undefined : durationToMillis(options.cleanupTimeout);
+    if (cleanupTimeout !== undefined && !(Number.isFinite(cleanupTimeout) && cleanupTimeout >= 0)) {
+      throw new ClientError(
+        `cleanupTimeout must be a non-negative number of milliseconds, got ${cleanupTimeout}`
+      );
+    }
 
     try {
       const nativeModule = getNativeModule();
-      await nativeModule.workflowHandleCancel(this.native);
+      await nativeModule.workflowHandleCancel(
+        this.native,
+        cleanupTimeout === undefined ? undefined : { cleanupTimeout }
+      );
     } catch (err) {
       throw wrapWorkflowError(err, 'Failed to cancel workflow', this.workflowId);
     }

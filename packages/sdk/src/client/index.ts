@@ -35,6 +35,7 @@ export { WorkflowHandle } from './workflow-handle';
 export type {
   WorkflowStartOptions,
   WorkflowHandleOptions,
+  CancelOptions,
   QueryOptions,
   EventOptions,
 } from './types';

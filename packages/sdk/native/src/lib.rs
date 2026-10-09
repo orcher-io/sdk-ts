@@ -10,6 +10,11 @@
 //!
 //! The functions exported in `main` are the whole JavaScript surface of the binding.
 
+// Protocol messages are built with `..Default::default()` even when every
+// field is set today: a field added to the protocol then leaves an older
+// release of this crate building, sending the field unset.
+#![allow(clippy::needless_update)]
+
 use neon::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;

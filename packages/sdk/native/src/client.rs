@@ -9,7 +9,7 @@ use neon::prelude::*;
 
 use crate::runtime::Runtime;
 
-use orcher_sdk_core::client::{StartWorkflowOpts, WorkflowClient};
+use orcher_sdk_core::client::{CancelWorkflowOpts, StartWorkflowOpts, WorkflowClient};
 use orcher_sdk_core::types::{
     ListWorkflowsOptions, ListWorkflowsSortOrder, SearchWorkflowsOptions,
 };
@@ -98,6 +98,7 @@ fn parse_retry_policy(
             .map(|ms| ms_to_proto_duration(ms as i64)),
         maximum_attempts: get_number_property(cx, rp, "maxAttempts")?.unwrap_or(0.0) as i32,
         non_retryable_error_types: get_string_array_property(cx, rp, "nonRetryableErrorTypes")?,
+        ..Default::default()
     }))
 }
 
@@ -583,21 +584,44 @@ pub fn get_workflow_result(mut cx: FunctionContext) -> JsResult<JsPromise> {
 // Cancel and terminate
 // ============================================================================
 
+/// The sdk-core options for a cancellation whose cleanup may take `cleanup_timeout`.
+fn cancel_opts(cleanup_timeout: Option<Duration>) -> CancelWorkflowOpts {
+    let opts = CancelWorkflowOpts::default();
+    match cleanup_timeout {
+        Some(timeout) => opts.with_cleanup_timeout(timeout),
+        None => opts,
+    }
+}
+
 /// Request cancellation of the workflow.
+///
+/// `options.cleanupTimeout` is how long, in milliseconds, the workflow may spend cleaning
+/// up before the engine terminates it; absent, there is no limit. Engines from before
+/// cancellation cleanup ignore it and cancel at once.
 ///
 /// JavaScript signature:
 /// ```typescript
-/// function workflowHandleCancel(handle: WorkflowHandle): Promise<void>;
+/// function workflowHandleCancel(
+///   handle: WorkflowHandle,
+///   options?: { cleanupTimeout?: number }
+/// ): Promise<void>;
 /// ```
 pub fn cancel_workflow(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let handle_box = cx.argument::<JsBox<WorkflowHandleType>>(0)?;
+    let cleanup_timeout = match cx.argument_opt(1) {
+        Some(value) => match value.downcast::<JsObject, _>(&mut cx) {
+            Ok(options) => get_duration_ms(&mut cx, options, &["cleanupTimeout"])?,
+            Err(_) => None,
+        },
+        None => None,
+    };
     let handle = &**handle_box;
     let handle_clone = handle.handle().clone();
     let runtime = Runtime::global();
 
     runtime.execute::<_, _, String>(&mut cx, async move {
         handle_clone
-            .cancel()
+            .cancel_with(cancel_opts(cleanup_timeout))
             .await
             .map_err(|e| crate::error_code::tagged(&e, "Failed to cancel workflow"))?;
 
@@ -1141,4 +1165,22 @@ pub fn close(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     tracing::info!("Closed client connection");
 
     Ok(cx.undefined())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cancellation_sets_no_cleanup_limit_by_default() {
+        assert_eq!(cancel_opts(None).cleanup_timeout, None);
+    }
+
+    #[test]
+    fn a_cancellation_passes_its_cleanup_limit_to_sdk_core() {
+        assert_eq!(
+            cancel_opts(Some(Duration::from_millis(90_500))).cleanup_timeout,
+            Some(Duration::from_millis(90_500))
+        );
+    }
 }

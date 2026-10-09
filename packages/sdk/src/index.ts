@@ -250,6 +250,7 @@ export type {
   ServiceConfig as WorkerConfig,
   WorkflowStartOptions,
   WorkflowHandleOptions,
+  CancelOptions,
   ExecutionRequest,
   ExecutionResult,
   NativeModule,

@@ -19,8 +19,8 @@ neon = { version = "1.0", default-features = false, features = ["napi-6", "futur
 
 # Orcher SDK Core and protocol types, from crates.io. To build against local
 # checkouts instead, see .cargo/config.example.toml.
-orcher-sdk-core = "0.9.0"
-orcher-proto = "0.1"
+orcher-sdk-core = "0.10"
+orcher-proto = "0.2"
 
 # gRPC
 tonic = { version = "0.12", features = ["transport", "tls", "tls-native-roots"] }

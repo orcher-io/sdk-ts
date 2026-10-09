@@ -202,6 +202,12 @@ const handle = client.getWorkflowHandle({ workflowId: 'approval-42' });
 await handle.sendEvent('approved', true);
 ```
 
+Cancel it the same way, optionally limiting how long its cleanup may take before the engine terminates it. Engines from before cancellation cleanup ignore the limit and cancel at once:
+
+```typescript
+await handle.cancel({ cleanupTimeout: Duration.fromSeconds(30) });
+```
+
 </details>
 
 <details>

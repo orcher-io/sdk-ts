@@ -882,9 +882,12 @@ export interface NativeModule {
   workflowHandleGetResult(handle: NativeWorkflowHandle): Promise<unknown>;
 
   /**
-   * Cancel workflow
+   * Cancel workflow. `cleanupTimeout` is in milliseconds.
    */
-  workflowHandleCancel(handle: NativeWorkflowHandle): Promise<void>;
+  workflowHandleCancel(
+    handle: NativeWorkflowHandle,
+    options?: { cleanupTimeout?: number }
+  ): Promise<void>;
 
   /**
    * Terminate workflow with reason

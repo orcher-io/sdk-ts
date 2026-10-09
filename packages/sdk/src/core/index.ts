@@ -39,6 +39,7 @@ export type {
 export type {
   WorkflowStartOptions,
   WorkflowHandleOptions,
+  CancelOptions,
   QueryOptions,
   EventOptions,
 } from '../client/types';
