@@ -365,7 +365,9 @@ describe('TaskExecutor', () => {
 
       expect(stats.minDuration).toBeGreaterThanOrEqual(0);
       expect(stats.maxDuration).toBeGreaterThanOrEqual(stats.minDuration);
-      expect(stats.maxDuration).toBeGreaterThanOrEqual(50);
+      // A 50 ms timer can fire a millisecond early on a busy runner, so allow
+      // for it; the point is that the slow task's duration was recorded.
+      expect(stats.maxDuration).toBeGreaterThanOrEqual(45);
     });
   });
 
