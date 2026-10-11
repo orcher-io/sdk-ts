@@ -303,7 +303,9 @@ export class WorkflowExecutor {
         (error as any).code === ErrorCode.WORKFLOW_CANCELED &&
         context.isCancelRequested();
       if (toldAndNotCaught && !context.wasSuspensionRequested()) {
-        this.logger.info(`[WF-EXEC] Workflow ended as cancelled: ${request.type} (${request.executionId})`);
+        this.logger.info(
+          `[WF-EXEC] Workflow ended as cancelled: ${request.type} (${request.executionId})`
+        );
         await context.closuresSettled();
         const stepCommands = context.takeCommands();
         const reachedSteps = context.takeReachedSteps();
@@ -533,43 +535,14 @@ export class WorkflowExecutor {
   }
 
   /**
-   * Deserialize input arguments
+   * The arguments the workflow is called with, after its context.
+   *
+   * A workflow has one input, the value the client started it with (`args[0]`),
+   * and it is the workflow's one argument whatever its type: an array is passed
+   * whole, not spread. A run started without input gets no argument.
    */
   private deserializeInput(input: any): any[] {
-    this.logger.debug('[WF-EXEC] deserializeInput called with:', JSON.stringify(input, null, 2));
-
-    if (!input) {
-      this.logger.debug('[WF-EXEC] Input is null/undefined, returning empty array');
-      return [];
-    }
-
-    if (Array.isArray(input)) {
-      this.logger.debug('[WF-EXEC] Input is array with', input.length, 'items');
-      // An array of Payload objects (data + metadata) is decoded element by element.
-      if (input.length > 0 && input[0].data !== undefined) {
-        this.logger.debug('[WF-EXEC] Input contains Payload objects, deserializing...');
-        const { fromPayload } = require('../core/bridge/payload');
-        const deserialized = input.map((p: any) => {
-          // fromPayload expects Uint8Array fields; they arrive as plain arrays.
-          const payload = {
-            data: new Uint8Array(p.data),
-            metadata: Object.fromEntries(
-              Object.entries(p.metadata || {}).map(([k, v]: [string, any]) => [
-                k,
-                new Uint8Array(v),
-              ])
-            ),
-          };
-          return fromPayload(payload);
-        });
-        this.logger.debug('[WF-EXEC] Deserialized inputs:', JSON.stringify(deserialized));
-        return deserialized;
-      }
-      return input;
-    }
-
-    this.logger.debug('[WF-EXEC] Input is single object, wrapping in array');
-    return [input];
+    return input === undefined || input === null ? [] : [input];
   }
 
   /**

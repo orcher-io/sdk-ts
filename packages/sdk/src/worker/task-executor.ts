@@ -394,15 +394,12 @@ export class TaskExecutor {
         const text = new TextDecoder().decode(Uint8Array.from(input));
         return [JSON.parse(text)];
       } catch {
-        // Not JSON-encoded bytes after all: treat the array as plain arguments below.
+        // Not JSON-encoded bytes after all: the array is the input itself.
       }
     }
 
-    if (Array.isArray(input)) {
-      return input;
-    }
-
-    // A single value is passed as the handler's only argument.
+    // A task has one input, and it is the handler's one argument whatever its
+    // type: an array is passed whole, not spread into arguments.
     return [input];
   }
 

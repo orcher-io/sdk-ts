@@ -445,11 +445,11 @@ describe('TaskExecutor', () => {
       expect(result.result).toEqual({ argCount: 0 });
     });
 
-    it('should handle array input', async () => {
+    it('should pass array input as one argument', async () => {
       const executor = new TaskExecutor({ logger });
 
-      const task: TaskDefinition = async (_ctx, a, b, c) => {
-        return { sum: a + b + c };
+      const task: TaskDefinition = async (_ctx, numbers: number[]) => {
+        return { sum: numbers.reduce((a, b) => a + b, 0) };
       };
       Object.defineProperty(task, 'name', { value: 'task' });
 
