@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.6](https://github.com/orcher-io/sdk-ts/compare/v0.5.5...v0.5.6) (2026-10-11)
+
+
+### Bug Fixes
+
+* accept heartbeatTimeout on the Task decorator and deprecate heartbeatInterval ([#31](https://github.com/orcher-io/sdk-ts/issues/31)) ([fabf579](https://github.com/orcher-io/sdk-ts/commit/fabf57927b4b1556a3fabcafccfb356342a4ecdd)), closes [#22](https://github.com/orcher-io/sdk-ts/issues/22) [#23](https://github.com/orcher-io/sdk-ts/issues/23)
+* pass a single workflow or task input as one argument ([#29](https://github.com/orcher-io/sdk-ts/issues/29)) ([af1c015](https://github.com/orcher-io/sdk-ts/commit/af1c015a2dcf7831e64a4de21eff6ff7e8d026b1)), closes [#20](https://github.com/orcher-io/sdk-ts/issues/20)
+* read the task and run ids the native worker sends ([#28](https://github.com/orcher-io/sdk-ts/issues/28)) ([64969ab](https://github.com/orcher-io/sdk-ts/commit/64969ab6e444f7651265cc79c7daeac7017d3b54)), closes [#19](https://github.com/orcher-io/sdk-ts/issues/19)
+* register a Workflow class given to the worker under its declared name ([#30](https://github.com/orcher-io/sdk-ts/issues/30)) ([d01898a](https://github.com/orcher-io/sdk-ts/commit/d01898abbd08d54d9cac375509f210d36ccca03f)), closes [#21](https://github.com/orcher-io/sdk-ts/issues/21)
+
 ## [0.5.5](https://github.com/orcher-io/sdk-ts/compare/v0.5.4...v0.5.5) (2026-10-09)
 
 
