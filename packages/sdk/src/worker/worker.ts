@@ -1787,7 +1787,7 @@ export class Worker {
   private async executeTaskDirectBindings(nativeRequest: any): Promise<any> {
     try {
       this.logger.debug(
-        `[DIRECT-BINDINGS] Task request received: ${nativeRequest.run_id || nativeRequest.runId}`
+        `[DIRECT-BINDINGS] Task request received: ${nativeRequest.task_type}/${nativeRequest.task_id}`
       );
 
       // Convert the native request to an ExecutionRequest
@@ -2398,15 +2398,22 @@ export class Worker {
       }
     }
 
-    const executionId =
-      nativeRequest.run_id || nativeRequest.runId || nativeRequest.executionId || 'unknown';
+    // The native worker hands a task over as `task_id`, `workflow_id` and
+    // `execution_id`, the last being the id of the workflow run that scheduled
+    // the task (see the task JSON built in native/src/worker.rs). The task id
+    // becomes the request's `executionId`, which `ctx.taskId()` returns.
+    const executionId = nativeRequest.task_id || nativeRequest.executionId || 'unknown';
     const workflowId =
-      nativeRequest.execution?.workflow_id ||
       nativeRequest.workflow_id ||
+      nativeRequest.execution?.workflow_id ||
       nativeRequest.workflowId ||
-      executionId;
+      'unknown';
     const runId =
-      nativeRequest.execution?.run_id || nativeRequest.run_id || nativeRequest.runId || executionId;
+      nativeRequest.execution_id ||
+      nativeRequest.execution?.run_id ||
+      nativeRequest.run_id ||
+      nativeRequest.runId ||
+      'unknown';
 
     return {
       executionId,
