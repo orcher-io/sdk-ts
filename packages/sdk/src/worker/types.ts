@@ -10,7 +10,8 @@ import type { DurationInput } from '../workflow/types';
  * A workflow registration accepted by `WorkerOptions.workflows`.
  *
  * Typed loosely because the worker accepts more than one shape: the value returned
- * by `workflow()`, or a function whose `name` is the workflow type. Classes
+ * by `workflow()`, a class decorated with `@Workflow()` (registered under the
+ * decorator's `name`), or a function whose `name` is the workflow type. Classes
  * decorated with `@Workflow()` are registered automatically when the option is
  * omitted.
  */
@@ -20,7 +21,8 @@ export type WorkflowDefinition = any;
  * A task registration accepted by `WorkerOptions.tasks`.
  *
  * Typed loosely because the worker accepts more than one shape: the value returned
- * by `task()`, or a function whose `name` is the task type. `@Task()` methods on
+ * by `task()`, a `@Tasks()` class (each of its `@Task()` methods registered under
+ * its task name), or a function whose `name` is the task type. `@Task()` methods on
  * `@Tasks()` classes are registered automatically when the option is omitted.
  */
 export type TaskDefinition = any;

@@ -18,6 +18,9 @@ import { getNativeModule } from '../core/native';
 import type { ClientConfig, NativeServiceHandle } from '../core/types';
 import { OrcherContainer } from '../di/container';
 import { globalRegistry as diGlobalRegistry } from '../di/registry';
+import { getWorkflowName } from '../di/decorators/workflow';
+import { getAllTaskReferences } from '../di/decorators/task';
+import { isTaskHandler } from '../di/decorators/tasks';
 
 import { ActorExecutor } from './actor-executor';
 import type { ActorStateClient } from '../actor/context';
@@ -2635,15 +2638,19 @@ export class Worker {
    * the run would end with an unparseable completion rather than a useful error.
    *
    * A reference resolves through the registry, because `workflow()` already
-   * registered itself there; that keeps one construction path for both.
+   * registered itself there; that keeps one construction path for both. So does
+   * a `@Workflow` class, by the name its decorator declares: a class is also a
+   * function with a `name`, but that is its JavaScript class name, which no
+   * start uses, and a class cannot be called without `new`.
    */
   private normalizeWorkflowEntries(provided: any[]): any[] {
     const byName = new Map<string, any>(
       this.convertDIWorkflowsToDefinitions().map((d: any) => [d.name, d])
     );
     return provided.map((entry: any) => {
-      if (typeof entry === 'function' && entry.name) return entry;
-      const name = entry?.workflowName ?? entry?.name;
+      const declared = typeof entry === 'function' ? getWorkflowName(entry) : undefined;
+      if (typeof entry === 'function' && entry.name && !declared) return entry;
+      const name = declared ?? entry?.workflowName ?? entry?.name;
       const resolved = name ? byName.get(name) : undefined;
       if (resolved) return resolved;
       throw new WorkerError(
@@ -2657,19 +2664,25 @@ export class Worker {
    * Accept either registration shape for `WorkerOptions.tasks`.
    * Mirrors {@link normalizeWorkflowEntries}; `task()` returns a `TaskReference`
    * (`{ taskName, handlerClass, methodName }`), which likewise carries no `name`.
+   * A `@Tasks` class stands for every `@Task` method on it, each under its task
+   * name.
    */
   private normalizeTaskEntries(provided: any[]): any[] {
     const byName = new Map<string, any>(
       this.convertDITasksToDefinitions().map((d: any) => [d.name, d])
     );
-    return provided.map((entry: any) => {
+    const entries = provided.flatMap((entry: any) =>
+      typeof entry === 'function' && isTaskHandler(entry) ? getAllTaskReferences(entry) : [entry]
+    );
+    return entries.map((entry: any) => {
       if (typeof entry === 'function' && entry.name) return entry;
       const name = entry?.taskName ?? entry?.name;
       const resolved = name ? byName.get(name) : undefined;
       if (resolved) return resolved;
       throw new WorkerError(
         `Cannot register task ${name ? `'${name}'` : '(unnamed entry)'}: pass the value ` +
-          `returned by task({ name, execute }) or a @Task method. Received: ${typeof entry}`
+          `returned by task({ name, execute }), a @Task reference or a @Tasks class. ` +
+          `Received: ${typeof entry}`
       );
     });
   }
