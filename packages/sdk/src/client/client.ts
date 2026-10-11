@@ -166,7 +166,8 @@ export class Client implements Disposable {
    * Start a workflow execution.
    *
    * `workflowId` defaults to a random UUID and `taskQueue` to `default`. Only
-   * the first element of `args` is sent as the workflow input.
+   * the first element of `args` is sent as the workflow input, and it reaches
+   * the workflow as its one argument, an array included.
    *
    * @param options - Workflow start options
    * @returns Workflow handle for the started workflow

@@ -1562,10 +1562,13 @@ export class Worker {
             // Convert camelCase to snake_case
             const snakeKey = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
-            // Special handling for input field - Rust expects Vec<Payload>
+            // sdk-core takes the input as Vec<Payload> and sends the engine the
+            // payloads' bytes joined together, so the input is always exactly one
+            // payload: one value, which reaches the task or child as its one
+            // argument. An array spread into several payloads would arrive as their
+            // concatenated JSON ([1, 2, 3] as 123). No input sends no payload.
             if (key === 'input') {
-              // Convert input value(s) to Payload format
-              const inputs = Array.isArray(value) ? value : [value];
+              const inputs = value === undefined ? [] : [value];
               cmdData[snakeKey] = inputs.map((v) => {
                 const payload = toPayload(v);
                 // Convert Uint8Array to regular array for JSON serialization
@@ -2004,7 +2007,8 @@ export class Worker {
 
     // Extract workflow info from the StartWorkflow job
     let workflowType = 'unknown';
-    let input: any = [];
+    // Undefined until the StartWorkflow job gives one: no input, no argument.
+    let input: any = undefined;
     let attempt = 1;
 
     if (nativeRequest.jobs && Array.isArray(nativeRequest.jobs)) {
@@ -2031,10 +2035,7 @@ export class Worker {
           );
 
           // Input is already a proper JavaScript value from Rust
-          input =
-            startWorkflowJob.input !== undefined && startWorkflowJob.input !== null
-              ? startWorkflowJob.input
-              : [];
+          input = startWorkflowJob.input ?? undefined;
           this.logger.debug('[CONVERT] Using input as JavaScript value:', input);
 
           attempt = startWorkflowJob.attempt || 1;
@@ -2050,10 +2051,7 @@ export class Worker {
           );
 
           // Input is already a proper JavaScript value from Rust
-          input =
-            startWorkflow.input !== undefined && startWorkflow.input !== null
-              ? startWorkflow.input
-              : [];
+          input = startWorkflow.input ?? undefined;
           this.logger.debug('[CONVERT] Using input as JavaScript value:', input);
 
           attempt = startWorkflow.attempt || 1;

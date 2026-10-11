@@ -28,7 +28,12 @@ export interface WorkflowStartOptions {
   taskQueue?: string;
 
   /**
-   * Arguments to pass to the workflow function.
+   * The workflow's input, as a one-element list: `args: [input]`.
+   *
+   * A workflow takes one input, and only `args[0]` is sent. It reaches the
+   * workflow function as its one argument after the context, whatever its type:
+   * `args: [[1, 2, 3]]` delivers the array `[1, 2, 3]`. To pass several values,
+   * put them in an object. Omit `args` to start the workflow without input.
    */
   args?: unknown[];
 
