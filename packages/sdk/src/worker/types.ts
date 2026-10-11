@@ -198,13 +198,16 @@ export interface WorkerOptions {
   tls?: import('../core/types').TlsConfig;
 
   /**
-   * Heartbeat interval in milliseconds.
+   * Has no effect, and will be removed.
    *
-   * Not used yet: the native layer heartbeats every running task on its own
-   * schedule, from the moment the task is handed over until its outcome
-   * reaches the engine.
+   * The worker heartbeats every running task on its own, from the moment the
+   * task is handed over until its outcome reaches the engine, at a third of the
+   * task's heartbeat timeout and at least every 30 seconds. A task with no
+   * heartbeat timeout is not supervised. To change how often a task is
+   * heartbeated, set its `heartbeatTimeout`: on `@Task()`, `task()` or
+   * `ctx.executeTask()`.
    *
-   * @default 30000
+   * @deprecated Set `heartbeatTimeout` on the task instead.
    */
   heartbeatInterval?: number;
 

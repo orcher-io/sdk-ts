@@ -158,7 +158,14 @@ export class Worker {
   private readonly options: Required<
     Omit<
       WorkerOptions,
-      'versionId' | 'binaryChecksum' | 'workflows' | 'tasks' | 'organizationId' | 'apiKey' | 'tls'
+      | 'versionId'
+      | 'binaryChecksum'
+      | 'workflows'
+      | 'tasks'
+      | 'organizationId'
+      | 'apiKey'
+      | 'tls'
+      | 'heartbeatInterval'
     >
   > &
     Pick<WorkerOptions, 'versionId' | 'binaryChecksum' | 'organizationId' | 'apiKey' | 'tls'> & {
@@ -275,12 +282,17 @@ export class Worker {
       organizationId: options.organizationId,
       apiKey: options.apiKey,
       tls: tlsForUrl(options.serverUrl, options.tls),
-      heartbeatInterval: options.heartbeatInterval ?? 30000,
       maxConcurrentActorOperations: options.maxConcurrentActorOperations ?? 100,
       actorPollerCount: options.actorPollerCount ?? 2,
     };
 
     this.logger = this.options.logger;
+    if (options.heartbeatInterval !== undefined) {
+      this.logger.warn(
+        'WorkerOptions.heartbeatInterval is deprecated and has no effect: each task is ' +
+          'heartbeated at a third of its heartbeatTimeout. Set heartbeatTimeout on the task instead.'
+      );
+    }
     this.workerId = this.options.identity;
     this.state = WorkerState.STOPPED;
     this.eventEmitter = new EventEmitter();
