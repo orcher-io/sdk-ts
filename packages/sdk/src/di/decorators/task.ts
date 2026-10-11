@@ -26,7 +26,8 @@ import { DecoratorError } from '../errors';
  * reference by method name, while the runtime static lives under the task name, so the typed
  * key would point at nothing. The method name is the task name.
  *
- * @param options - Task options: `name`, `timeout` in milliseconds, and `retryPolicy`.
+ * @param options - Task options: `name`, `timeout` and `heartbeatTimeout` in milliseconds, and
+ *   `retryPolicy`.
  * @returns A method decorator.
  * @throws DecoratorError if applied to a symbol-named property or a non-method, or if the
  *   class already has a static property with the task name.
@@ -135,6 +136,7 @@ export function Task(options: TaskOptions = {}): MethodDecorator {
       handlerClass,
       methodName,
       timeout: options.timeout,
+      heartbeatTimeout: options.heartbeatTimeout,
       retryPolicy: options.retryPolicy,
     };
 
@@ -155,6 +157,7 @@ export function Task(options: TaskOptions = {}): MethodDecorator {
       // Carried on the reference as well as the metadata, because the reference is what
       // `executeTask` receives.
       timeout: options.timeout,
+      heartbeatTimeout: options.heartbeatTimeout,
     };
 
     Object.defineProperty(handlerClass, staticPropertyName, {
