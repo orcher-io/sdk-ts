@@ -9,20 +9,15 @@ import type { Logger } from '../types';
 import { Updates, Update } from '../../di/decorators';
 import type { WorkflowContext } from '../../workflow/context';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
-const bytes = (value: unknown): number[] =>
-  Array.from(new TextEncoder().encode(JSON.stringify(value)));
+const bytes = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
 
 const received: Array<{ workflowId: string; input: unknown }> = [];
 
@@ -52,27 +47,56 @@ describe('@Update handlers', () => {
       logger: silent,
     });
 
-    const result = await (worker as any).executeWorkflowDirectBindings({
-      run_id: 'run-1',
-      execution: { workflow_id: 'wf-1', run_id: 'run-1' },
-      jobs: [
-        { StartWorkflow: { workflow_type: 'with_updates', workflow_id: 'wf-1', input: {} } },
-        // The job as sdk-core serializes it.
+    const at = { seconds: '1', nanos: 0 };
+    const result = await worker.runActivation({
+      activationId: new Uint8Array([1]),
+      run: {
+        workflowId: 'wf-1',
+        runId: 'run-1',
+        workflowType: 'with_updates',
+        taskQueue: 'updates',
+        namespace: 'default',
+      },
+      resolutions: [
         {
-          UpdateState: {
-            update_id: 'u-1',
-            update_name: 'change_address',
-            payload: { data: bytes({ city: 'Oslo' }), metadata: {} },
-            headers: [],
+          stepId: '',
+          at,
+          replaying: false,
+          what: {
+            oneofKind: 'started',
+            started: {
+              input: [{ data: bytes({}), metadata: {} }],
+              attempt: 1,
+              startedAt: at,
+              randomSeed: new Uint8Array(),
+              headers: {},
+              stepIds: 0,
+              historyLineage: '',
+            },
+          },
+        },
+        {
+          stepId: '',
+          at,
+          replaying: false,
+          what: {
+            oneofKind: 'update',
+            update: {
+              updateId: 'u-1',
+              name: 'change_address',
+              args: [{ data: bytes({ city: 'Oslo' }), metadata: {} }],
+            },
           },
         },
       ],
+      queries: [],
     });
 
     expect(received).toEqual([{ workflowId: 'wf-1', input: { city: 'Oslo' } }]);
-    const [update] = result.update_results;
-    expect(update.update_id).toBe('u-1');
-    const output = update.result.Completed.output.data;
-    expect(JSON.parse(new TextDecoder().decode(new Uint8Array(output)))).toBe('moved to Oslo');
+    const [update] = result.updates;
+    expect(update!.updateId).toBe('u-1');
+    expect(update!.answer.oneofKind).toBe('value');
+    const output = update!.answer.oneofKind === 'value' ? update!.answer.value.data : undefined;
+    expect(JSON.parse(new TextDecoder().decode(output))).toBe('moved to Oslo');
   });
 });

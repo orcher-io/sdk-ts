@@ -8,6 +8,8 @@
  * `expected.json` beside them what the SDK answered each with: the commands,
  * the steps reached, the query and update answers, or the failure, as the
  * kernel turns the SDK's `RunActivationResult` into what goes to the engine.
+ * The expected results were produced while the worker still had its
+ * journal-reading path as well, and both paths agreed on every one.
  *
  * Each activation is resolved by the kernel into a `RunActivation`, answered
  * by `Worker.runActivation`, and the answer turned back by the kernel, as the
@@ -67,10 +69,6 @@ function recordedActivations(corpus: string): Array<[string, Buffer]> {
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 
-// The worker starts polling the engine when it is created; this check runs
-// without one.
-(Worker.prototype as any).initializeEagerPolling = () => undefined;
-
 const workers = new Map<string, Worker>();
 /** A worker for the task queue an activation was recorded on: tasks and
  * children it schedules default to the worker's queue. It is never run, so
@@ -97,11 +95,6 @@ async function main(): Promise<void> {
       throw new Error(`the native module has no ${hook}; rebuild it (npm run build)`);
     }
   }
-  // While the worker still has its journal-reading path, blessing also holds
-  // the two paths equal: the expected results are the ones both produce.
-  const legacy =
-    typeof native.legacyExecutionRequest === 'function' &&
-    typeof native.legacyExecutionResult === 'function';
 
   let checked = 0;
   const problems: string[] = [];
@@ -138,32 +131,7 @@ async function main(): Promise<void> {
       }
       answered[key] = result;
 
-      if (bless && legacy) {
-        activations.clear();
-        const request = JSON.parse(native.legacyExecutionRequest(bytes));
-        const old = JSON.parse(
-          native.legacyExecutionResult(
-            JSON.stringify(await worker.executeWorkflowDirectBindings(request))
-          )
-        );
-        // A failed workflow: the journal path sends the steps it reached, the
-        // kernel none. Equal when there were none.
-        const kernel = { ...(result as any) };
-        if (
-          old.successful === false &&
-          Array.isArray(old.reached_steps) &&
-          old.reached_steps.length === 0 &&
-          kernel.reached_steps == null
-        ) {
-          kernel.reached_steps = old.reached_steps;
-        }
-        if (!isDeepStrictEqual(old, kernel)) {
-          problems.push(
-            `${key} (${run?.workflowType}): the journal path answers differently\n` +
-              `  journal: ${JSON.stringify(old)}\n  kernel:  ${JSON.stringify(result)}`
-          );
-        }
-      } else if (!bless) {
+      if (!bless) {
         if (!(key in expected)) {
           problems.push(`${key}: no expected result`);
         } else if (!isDeepStrictEqual(expected[key], result)) {

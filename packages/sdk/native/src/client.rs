@@ -6,16 +6,20 @@
 use std::time::Duration;
 
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 
 use crate::runtime::Runtime;
 
-use orcher_sdk_core::client::{CancelWorkflowOpts, StartWorkflowOpts, WorkflowClient};
+use orcher_sdk_core::client::{
+    CancelWorkflowOpts, CoreActorClient, StartWorkflowOpts, WorkflowClient,
+};
 use orcher_sdk_core::types::{
     ListWorkflowsOptions, ListWorkflowsSortOrder, SearchWorkflowsOptions,
 };
 
 use crate::types::{get_optional_bool_property, get_optional_string_property, get_string_property};
 use orcher_sdk_core::poller::TlsConfig;
+use tonic::transport::Channel;
 
 /// Convert a millisecond duration to the proto `Duration` used in retry policies.
 fn ms_to_proto_duration(ms: i64) -> orcher_sdk_core::proto::prost_types::Duration {
@@ -1171,6 +1175,56 @@ pub fn close(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     tracing::info!("Closed client connection");
 
     Ok(cx.undefined())
+}
+
+// ============================================================================
+// Client invoke actor operation (client side)
+// ============================================================================
+
+/// Invoke an actor operation from a client and wait for its result.
+///
+/// Opens a channel to the client's server URL and calls sdk-core's `CoreActorClient`,
+/// which wraps `ActorServiceClient`.
+///
+/// JavaScript signature:
+/// ```typescript
+/// function clientInvokeActorOperation(
+///   client: ClientHandle,
+///   actorName: string,
+///   key: string,
+///   operation: string,
+///   payload: Uint8Array
+/// ): Promise<Uint8Array>;
+/// ```
+pub fn client_invoke_actor_operation(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let client_box = cx.argument::<JsBox<ClientHandleType>>(0)?;
+    let actor_name = cx.argument::<JsString>(1)?.value(&mut cx);
+    let key = cx.argument::<JsString>(2)?.value(&mut cx);
+    let operation = cx.argument::<JsString>(3)?.value(&mut cx);
+
+    let payload_buf = cx.argument::<JsBuffer>(4)?;
+    let payload = payload_buf.as_slice(&cx).to_vec();
+
+    let server_url = client_box.server_url.clone();
+
+    let runtime = Runtime::global();
+
+    runtime.execute::<_, _, String>(&mut cx, async move {
+        let channel = Channel::from_shared(server_url)
+            .map_err(|e| format!("Invalid server URL: {}", e))?
+            .connect()
+            .await
+            .map_err(|e| format!("Failed to connect for actor invoke: {}", e))?;
+
+        let actor_client = CoreActorClient::new(channel);
+
+        let result = actor_client
+            .invoke_operation(actor_name, key, operation, payload, None, None)
+            .await
+            .map_err(|e| format!("Actor invoke failed: {}", e))?;
+
+        Ok(result)
+    })
 }
 
 #[cfg(test)]

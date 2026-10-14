@@ -1,56 +1,48 @@
 /**
- * Commands reach sdk-core in the shape it deserializes: a command it cannot
- * parse fails the whole activation.
+ * Commands go out as the kernel protocol carries them; one it cannot carry is
+ * refused with a protocol error, which hands the activation back rather than
+ * failing the run.
  */
 
 import { Duration } from '../../workflow/types';
 import type { WorkflowContext } from '../../workflow/context';
-import { FakeEngine, bytes, runner, taskRef } from './support/fake-engine';
+import { FakeEngine, activation, bytes, runner, taskRef } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
-describe('commands as sdk-core deserializes them', () => {
+describe('commands as the kernel protocol carries them', () => {
   const firstActivation = async (run: (ctx: WorkflowContext) => Promise<unknown>) =>
     runner(run)(new FakeEngine());
 
-  it('sends a closure result as bytes, with its attempt', async () => {
+  it('sends a closure result as the JSON of its value', async () => {
     const commands = await firstActivation(async (ctx) => {
       await ctx.execute('fetch', async () => ({ id: 7 }));
       return ctx.executeTask(taskRef('next'), 0);
     });
 
-    expect(commands.find((c) => 'RecordStepResult' in c)).toEqual({
-      RecordStepResult: {
-        step_name: 'fetch_0',
-        step_type: 2,
-        result: bytes({ id: 7 }),
-        failure: null,
-        execution_attempt: 1,
-      },
+    const recorded = commands.find((c) => c.what.oneofKind === 'recordValue')!;
+    expect(recorded.stepId).toBe('fetch_0');
+    expect((recorded.what as any).recordValue.outcome.result).toEqual({
+      oneofKind: 'value',
+      value: { data: bytes({ id: 7 }), metadata: {} },
     });
   });
 
   it.each([
     ['milliseconds', 90_000],
     ['a Duration', Duration.fromSeconds(90)],
-  ])('sends a restart timeout given in %s as a Duration', async (_label, timeout) => {
-    const commands = await firstActivation(async (ctx) => {
+  ])('refuses a restart with a timeout, given in %s', async (_label, timeout) => {
+    const answered = await activation(async (ctx) => {
       ctx.restartFresh({ n: 1 }, { timeout });
       return null;
-    });
+    })(new FakeEngine());
 
-    expect(commands.find((c) => 'RestartFresh' in c)!['RestartFresh'].timeout).toEqual({
-      secs: 90,
-      nanos: 0,
-    });
+    expect(answered.answer.outcome.oneofKind).toBe('protocolError');
+    expect(answered.error).toMatch(/restarted with a timeout/);
   });
 
   it('sends a child timeout as a Duration', async () => {
@@ -58,8 +50,7 @@ describe('commands as sdk-core deserializes them', () => {
       ctx.executeChildWorkflow('child_wf', {}, { timeout: Duration.fromMilliseconds(1_500) })
     );
 
-    expect(commands.find((c) => 'StartChildWorkflow' in c)!['StartChildWorkflow'].timeout).toEqual(
-      { secs: 1, nanos: 500_000_000 }
-    );
+    const started = commands.find((c) => c.what.oneofKind === 'startChild')!.what as any;
+    expect(started.startChild.executionTimeout).toEqual({ seconds: '1', nanos: 500_000_000 });
   });
 });

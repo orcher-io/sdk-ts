@@ -316,3 +316,11 @@ pub fn js_value_to_json<'a, C: Context<'a>>(
         cx.throw_error("Unsupported JavaScript type for JSON conversion")
     }
 }
+
+/// Returns bytes to JavaScript as a Node.js `Buffer`, which is a `Uint8Array`.
+impl IntoJs for Vec<u8> {
+    fn into_js<'a, C: Context<'a>>(self, cx: &mut C) -> JsResult<'a, JsValue> {
+        let buf = JsBuffer::from_slice(cx, &self)?;
+        Ok(buf.upcast())
+    }
+}

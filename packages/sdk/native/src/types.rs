@@ -61,22 +61,3 @@ pub fn get_optional_bool_property<'a, C: Context<'a>>(
 
     Ok(Some(js_bool.value(cx)))
 }
-
-/// Read an optional number property.
-pub fn get_optional_number_property<'a, C: Context<'a>>(
-    cx: &mut C,
-    obj: Handle<JsObject>,
-    key: &str,
-) -> NeonResult<Option<f64>> {
-    let value: Handle<JsValue> = obj.get(cx, key)?;
-
-    if value.is_a::<JsNull, _>(cx) || value.is_a::<JsUndefined, _>(cx) {
-        return Ok(None);
-    }
-
-    let js_number = value
-        .downcast::<JsNumber, _>(cx)
-        .or_else(|_| cx.throw_error(format!("Property '{}' must be a number", key)))?;
-
-    Ok(Some(js_number.value(cx)))
-}

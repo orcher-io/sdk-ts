@@ -24,8 +24,8 @@ The Python and Rust SDKs carry equivalent checks.
   engine, asserts the outcome, and exits non-zero on any failure.
 - `run.sh`: checks that an engine is reachable, then runs `run.ts`.
 - `long_wait.ts`: a separate long-running check, described below.
-- `kernel-equivalence.ts`: an engine-free check of the kernel-protocol path
-  against recorded activations, described below.
+- `replay-check.ts`: an engine-free replay of recorded activations against
+  committed expected results (`replay/`), described below.
 - `tsconfig.json`: config for `ts-node`.
 
 ## Scenario kinds
@@ -103,8 +103,8 @@ signal and handle only real task failures (`WorkflowError.taskFailed`, whose
 `details.taskType` names the task). Swallowing it breaks durability. See
 `catch_task_failure` in `catalog.ts`.
 
-The worker is started with `worker.run()`, which returns once it has connected
-and registered; the pollers keep running in the background.
+The worker is started with `worker.run()`, which returns once its worker host
+has started and registered it; the host keeps polling in the background.
 
 ### Long-wait check
 
@@ -126,20 +126,26 @@ npx ts-node --project contract/tsconfig.json contract/long_wait.ts --sleep-secs 
 npx ts-node --project contract/tsconfig.json contract/long_wait.ts --sleep-secs 5
 ```
 
-### Kernel-protocol equivalence
+### Replaying recorded activations
 
-`kernel-equivalence.ts` runs every recorded workflow activation through both of
-the worker's paths and requires the same result from each: today's (the jobs
-sdk-core derives from the journal, run by `executeWorkflowDirectBindings`) and
-the kernel protocol's (a `RunActivation` resolved by the kernel, run by
-`Worker.runActivation`). No engine is needed. The activations are a recording
-made with `ORCHER_RECORD_ACTIVATIONS` while this harness ran, by default from
-`~/orcher-corpus/typescript`:
+`replay-check.ts` replays recorded workflow activations and checks the SDK still
+answers each the way it did when the expected results were recorded. No engine
+is needed. `replay/<corpus>/` holds activations recorded from this catalog with
+`ORCHER_RECORD_ACTIVATIONS` (layout `<workflow>/<run>/<n>-activation.pb`; only
+the activation messages are kept), and `expected.json` beside them what the SDK
+answered each with, as the kernel turns that answer into what goes to the
+engine. Each activation is resolved by the kernel into a `RunActivation`,
+answered by `Worker.runActivation`, and the answer turned back by the kernel,
+as the worker host does on a live worker.
 
 ```bash
-npx ts-node --project contract/tsconfig.json contract/kernel-equivalence.ts [dir]
+npx ts-node --project contract/tsconfig.json contract/replay-check.ts
+# For a change meant to alter what the SDK sends: rewrite expected.json
+npx ts-node --project contract/tsconfig.json contract/replay-check.ts --bless
 ```
 
 It needs the built SDK and native module (`npm run build` in packages/sdk), and
-fails on any activation whose results differ or whose workflow is not in the
-catalog.
+fails on any activation whose answer differs from its expected result or whose
+workflow is not in the catalog. The `baseline` corpus's expected results were
+produced while the worker still had its journal-reading path as well, and both
+paths agreed on every activation.

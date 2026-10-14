@@ -12,13 +12,9 @@ import { Task } from '../../di/decorators/task';
 import type { WorkflowContext } from '../../workflow/context';
 import { FakeEngine } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
@@ -61,13 +57,14 @@ describe('decorated classes in WorkerOptions', () => {
 
     expect([...(w as any).workflowMap.keys()]).toEqual(['order-fulfilment']);
 
-    const request: any = new FakeEngine({ orderId: 'o-1' }).request();
-    request.jobs[0].StartWorkflow.workflow_type = 'order-fulfilment';
-    const result = await (w as any).executeWorkflowDirectBindings(request);
+    const activation = new FakeEngine({ orderId: 'o-1' }).activation();
+    activation.run!.workflowType = 'order-fulfilment';
+    const result = await w.runActivation(activation);
 
-    expect(result.successful).toBe(true);
-    const completion = result.commands.find((c: any) => 'CompleteWorkflow' in c);
-    expect(completion).toBeDefined();
+    expect(result.outcome.oneofKind).toBe('commands');
+    const commands =
+      result.outcome.oneofKind === 'commands' ? result.outcome.commands.commands : [];
+    expect(commands.find((c) => c.what.oneofKind === 'completeRun')).toBeDefined();
   });
 
   it('registers every task of a Tasks class under its task name', () => {

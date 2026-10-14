@@ -10,7 +10,7 @@ can agree on the approach before you spend time on it.
 packages/sdk/
 ├── src/          TypeScript source: worker, workflow and task contexts,
 │                 client, decorators and dependency injection, testing utilities
-├── native/       Rust crate (Neon) that binds the SDK to orcher-sdk-core
+├── native/       Rust crate (Neon) that binds the SDK to orcher-sdk-host and orcher-sdk-core
 ├── npm/          One package per platform, carrying the prebuilt binding
 └── scripts/      Build, packaging and protocol generation helpers
 contract/         Live contract suite, run against a real engine
@@ -41,7 +41,7 @@ always takes precedence over an installed platform package, so the contract
 suite runs against your build.
 
 The native crate depends on
-[`orcher-sdk-core`](https://github.com/orcher-io/sdk-core) and
+[`orcher-sdk-host` and `orcher-sdk-core`](https://github.com/orcher-io/sdk-core) and
 [`orcher-proto`](https://github.com/orcher-io/protos), taken from crates.io at
 the versions in `packages/sdk/native/Cargo.toml`. To change one of them and
 this SDK together, check them out next to this repository and build against

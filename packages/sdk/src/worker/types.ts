@@ -83,37 +83,37 @@ export interface WorkerOptions {
   maxConcurrentTasks?: number;
 
   /**
-   * Number of concurrent workflow pollers.
+   * Number of workflow polls the worker host keeps open against the engine.
    *
-   * Higher values increase polling throughput and let the worker handle more
-   * concurrent workflow executions. Each poller has its own slot in the native
-   * layer, keyed by run ID, so pollers do not contend with each other.
+   * Higher values increase polling throughput. How many activations run at
+   * once is `maxConcurrentWorkflows`.
    *
    * @default 4
    */
   workflowPollerCount?: number;
 
   /**
-   * Number of concurrent task pollers.
+   * Number of task polls the worker host keeps open against the engine.
    *
-   * Higher values increase polling throughput and let the worker handle more
-   * concurrent task executions. Each poller has its own slot in the native
-   * layer, keyed by task ID, so pollers do not contend with each other.
+   * Higher values increase polling throughput. How many tasks run at once is
+   * `maxConcurrentTasks`.
    *
    * @default 4
    */
   taskPollerCount?: number;
 
   /**
-   * Workflow polling interval in milliseconds
+   * Has no effect: the worker host long-polls the engine.
    *
+   * @deprecated
    * @default 100
    */
   workflowPollInterval?: number;
 
   /**
-   * Task polling interval in milliseconds
+   * Has no effect: the worker host long-polls the engine.
    *
+   * @deprecated
    * @default 100
    */
   taskPollInterval?: number;
@@ -121,9 +121,10 @@ export interface WorkerOptions {
   /**
    * Graceful shutdown timeout.
    *
-   * How long shutdown waits for in-flight executions to complete before it
-   * stops the worker anyway. Accepts the `Duration` helper or a bare number of
-   * milliseconds.
+   * How long a stopping worker gives its running work to finish. Workflow
+   * activations still unanswered after it are handed back to the engine for
+   * another worker; tasks and actor operations still running are left to their
+   * timeouts. Accepts the `Duration` helper or a bare number of milliseconds.
    *
    * @default 30000 (30 seconds)
    */
@@ -222,7 +223,7 @@ export interface WorkerOptions {
   maxConcurrentActorOperations?: number;
 
   /**
-   * Number of concurrent actor operation pollers.
+   * Number of actor operation polls the worker host keeps open.
    *
    * @default 2
    */
@@ -329,17 +330,18 @@ export interface WorkerStats {
  */
 export interface ShutdownOptions {
   /**
-   * Custom timeout in milliseconds.
+   * Has no effect: the grace a shutdown gives running work is the worker's
+   * `shutdownGraceTime`, fixed when the worker starts.
    *
-   * Overrides `shutdownGraceTime` for this shutdown.
+   * @deprecated Set `shutdownGraceTime` on the worker instead.
    */
   timeout?: number;
 
   /**
-   * Force immediate shutdown.
+   * Has no effect beyond the state the worker reports while it stops: running
+   * work still gets the worker's `shutdownGraceTime`.
    *
-   * If true, shutdown does not wait for in-flight executions to complete.
-   *
+   * @deprecated Set `shutdownGraceTime` on the worker instead.
    * @default false
    */
   force?: boolean;

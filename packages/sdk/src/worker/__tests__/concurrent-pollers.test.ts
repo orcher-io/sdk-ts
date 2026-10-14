@@ -8,21 +8,9 @@
 import { Worker } from '../worker';
 import { WorkerOptions } from '../types';
 
-// Mock the native module to avoid an FFI dependency in unit tests.
-//
-// The Worker constructor creates a native service handle and starts polling,
-// so the mock has to satisfy `serviceCreate` for construction to complete. It deliberately omits
-// the poll functions: `startPullModelPollingAsync` checks for them and bails, so
-// no polling loops start and the suite stays a unit test.
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    // Never settle: each polling loop parks on its first poll instead of
-    // spinning, so the loops neither busy-wait nor hold the event loop open.
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 

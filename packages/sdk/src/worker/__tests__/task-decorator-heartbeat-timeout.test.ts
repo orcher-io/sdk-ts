@@ -11,13 +11,9 @@ import { Worker } from '../worker';
 import type { Logger } from '../types';
 import { FakeEngine, runner } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
@@ -47,8 +43,8 @@ describe('Task decorator heartbeatTimeout', () => {
       new FakeEngine()
     );
 
-    const scheduled = commands.find((c) => 'ScheduleTask' in c)!['ScheduleTask'];
-    expect(scheduled.heartbeat_timeout).toEqual({ secs: 2, nanos: 500_000_000 });
+    const scheduled = commands.find((c) => c.what.oneofKind === 'runTask')!.what as any;
+    expect(scheduled.runTask.heartbeatTimeout).toEqual({ seconds: '2', nanos: 500_000_000 });
   });
 
   it('schedules an undeclared task without heartbeat supervision', async () => {
@@ -56,8 +52,8 @@ describe('Task decorator heartbeatTimeout', () => {
       new FakeEngine()
     );
 
-    const scheduled = commands.find((c) => 'ScheduleTask' in c)!['ScheduleTask'];
-    expect(scheduled.heartbeat_timeout).toBeNull();
+    const scheduled = commands.find((c) => c.what.oneofKind === 'runTask')!.what as any;
+    expect(scheduled.runTask.heartbeatTimeout).toBeUndefined();
   });
 });
 

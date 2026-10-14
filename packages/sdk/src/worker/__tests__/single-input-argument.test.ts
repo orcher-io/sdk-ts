@@ -12,21 +12,17 @@ import type { ExecutionRequest, Logger, TaskDefinition } from '../types';
 import type { WorkflowContext } from '../../workflow/context';
 import { FakeEngine, bytes, runner, taskRef } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
-/** The input sdk-core sends the engine for a command: its payloads' bytes, joined. */
-const sentInput = (payloads: Array<{ data: number[] }>): unknown =>
-  JSON.parse(new TextDecoder().decode(Uint8Array.from(payloads.flatMap((p) => p.data))));
+/** The input the engine is sent for a command: its payloads' bytes, joined. */
+const sentInput = (payloads: Array<{ data: Uint8Array }>): unknown =>
+  JSON.parse(new TextDecoder().decode(Uint8Array.from(payloads.flatMap((p) => [...p.data]))));
 
 /** The arguments a workflow receives for the input the engine delivers. */
 async function workflowArgs(input: unknown, { omitInput = false } = {}): Promise<unknown[]> {
@@ -44,10 +40,11 @@ async function workflowArgs(input: unknown, { omitInput = false } = {}): Promise
     tasks: [],
     logger: silent,
   });
-  const request: any = new FakeEngine(input).request();
-  if (omitInput) delete request.jobs[0].StartWorkflow.input;
-  const result = await (worker as any).executeWorkflowDirectBindings(request);
-  expect(result.successful).toBe(true);
+  const activation = new FakeEngine(input).activation();
+  const started = activation.resolutions[0]!.what;
+  if (omitInput && started.oneofKind === 'started') started.started.input = [];
+  const result = await worker.runActivation(activation);
+  expect(result.outcome.oneofKind).toBe('commands');
   return received;
 }
 
@@ -74,8 +71,8 @@ describe('a single input is a single argument', () => {
       new FakeEngine()
     );
 
-    const scheduled = commands.find((c) => 'ScheduleTask' in c)!['ScheduleTask'];
-    expect(sentInput(scheduled.input)).toEqual([1, 2, 3]);
+    const scheduled = commands.find((c) => c.what.oneofKind === 'runTask')!.what as any;
+    expect(sentInput(scheduled.runTask.input)).toEqual([1, 2, 3]);
   });
 
   it('a child started with an array is sent that array as its input', async () => {
@@ -83,8 +80,8 @@ describe('a single input is a single argument', () => {
       new FakeEngine()
     );
 
-    const started = commands.find((c) => 'StartChildWorkflow' in c)!['StartChildWorkflow'];
-    expect(sentInput(started.input)).toEqual(['a', 'b']);
+    const started = commands.find((c) => c.what.oneofKind === 'startChild')!.what as any;
+    expect(sentInput(started.startChild.input)).toEqual(['a', 'b']);
   });
 
   it('a task receives an array input as one argument', async () => {
@@ -102,8 +99,8 @@ describe('a single input is a single argument', () => {
     });
     const executor = new TaskExecutor({ logger: silent });
 
-    // As the engine delivers it: the JSON bytes of the input.
-    await executor.execute(sum, request(bytes(['x', 'y'])));
+    // As the worker host delivers it: the JSON bytes of the input.
+    await executor.execute(sum, request(Array.from(bytes(['x', 'y']))));
     expect(received).toEqual([['x', 'y']]);
 
     // As a value, the way the session tasks and tests hand it over.

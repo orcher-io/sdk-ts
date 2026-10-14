@@ -794,7 +794,7 @@ async function main(): Promise<void> {
     ],
   });
   try {
-    await worker.run(); // connects + registers; pollers run in the background
+    await worker.run(); // starts the worker host, which registers and polls in the background
   } catch (e) {
     throw namespaceHint(e, namespace);
   }
