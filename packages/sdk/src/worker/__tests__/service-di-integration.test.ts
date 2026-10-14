@@ -17,18 +17,9 @@ import { TaskContext } from '../../task/context';
 import { WorkflowContext } from '../../workflow/context';
 import type { Logger } from '../types';
 
-// Mock the native module to avoid an FFI dependency in unit tests.
-//
-// The Worker constructor creates a native service handle and starts polling,
-// so the mock has to satisfy `serviceCreate`. Poll functions never settle, so each loop parks on
-// its first poll rather than spinning or holding the event loop open.
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 

@@ -12,9 +12,6 @@ export { WorkerBuilder } from './worker-builder';
 export { autoDiscover, shouldUseAutoDiscover, validateAutoDiscoverOptions } from './auto-discover';
 export type { AutoDiscoverOptions, AutoDiscoverResult } from './auto-discover';
 
-export { SessionManager } from './session';
-export type { SessionManagerOptions } from './session';
-
 export { Semaphore } from './semaphore';
 export type { SemaphoreStats } from './semaphore';
 

@@ -17,10 +17,52 @@ export interface NativeClientHandle {
 }
 
 /**
- * Native service handle (opaque pointer to Rust ServiceHandle)
+ * A running worker host (opaque handle to the native `orcher-sdk-host` worker)
  */
-export interface NativeServiceHandle {
-  readonly __brand: 'NativeServiceHandle';
+export interface NativeHostHandle {
+  readonly __brand: 'NativeHostHandle';
+}
+
+/**
+ * @deprecated The worker runs on the worker host; use {@link NativeHostHandle}.
+ */
+export type NativeServiceHandle = NativeHostHandle;
+
+/**
+ * A worker's configuration as `hostStart` reads it. Every option left out
+ * keeps the worker host's default.
+ */
+export interface HostConfig {
+  serverUrl: string;
+  taskQueue: string;
+  namespace: string;
+  identity?: string;
+  apiKey?: string;
+  organizationId?: string;
+  /** The release the worker runs; blank means none. */
+  versionId?: string;
+  /** TLS for every connection; present (even empty) means TLS. */
+  tls?: TlsConfig;
+  maxConcurrentWorkflows?: number;
+  maxConcurrentTasks?: number;
+  maxConcurrentActorOperations?: number;
+  workflowPollers?: number;
+  taskPollers?: number;
+  actorPollers?: number;
+  /** How often the worker tells the engine it is alive. */
+  heartbeatIntervalMs?: number;
+  maxSessions?: number;
+  /** How long a stopping worker gives its running work to finish. */
+  shutdownGraceMs?: number;
+  sdkName?: string;
+  sdkVersion?: string;
+}
+
+/** What a worker runs, as `hostStart` reads it. */
+export interface HostRegistrations {
+  workflowTypes: string[];
+  taskTypes: string[];
+  actorHandlers: Array<{ actorName: string; operation: string; shared: boolean }>;
 }
 
 /**
@@ -575,249 +617,104 @@ export interface NativeModule {
    */
   clientClose(client: NativeClientHandle): void;
 
-  // Service operations
-  /**
-   * Create a service (worker)
-   */
-  serviceCreate(config: ServiceConfig): NativeServiceHandle;
+  // The worker: a binding over the worker host (orcher-sdk-host). Work
+  // crosses as its protobuf encoding (orcher.kernel.v1 / orcher.host.v1).
+  // A pull resolves null once the host has stopped and handed over
+  // everything it took; it never resolves empty-handed before then.
 
   /**
-   * Start service with sdk-core drivers (creates WorkflowDriver, TaskDriver,
-   * and optionally ActorDriver)
+   * Start a worker: its drivers, its registration with the engine, and its
+   * actor handlers' registration. Rejects when nothing is registered, the
+   * engine cannot be reached, a TLS file cannot be read, or the actor service
+   * refuses the handlers.
    *
-   * @param service - Service handle
-   * @param workflowPollerCount - Number of workflow pollers
-   * @param taskPollerCount - Number of task pollers
-   * @param actorPollerCount - Number of actor pollers (optional, 0 = no actor driver)
-   * @param actorRegistrationId - Registration ID from registerActorHandlers (optional)
+   * @param configJson - JSON {@link HostConfig}
+   * @param registrationsJson - JSON {@link HostRegistrations}
    */
-  serviceStart(
-    service: NativeServiceHandle,
-    workflowPollerCount: number,
-    taskPollerCount: number,
-    actorPollerCount?: number,
-    actorRegistrationId?: string
-  ): Promise<void>;
+  hostStart(configJson: string, registrationsJson: string): Promise<NativeHostHandle>;
+
+  /** The next workflow activation, an encoded `RunActivation`. */
+  hostNextActivation(host: NativeHostHandle): Promise<Uint8Array | null>;
+
+  /** Answer an activation with an encoded `RunActivationResult`. */
+  hostCompleteActivation(host: NativeHostHandle, result: Uint8Array): Promise<void>;
+
+  /** The next task, an encoded `TaskAssignment`. */
+  hostNextTask(host: NativeHostHandle): Promise<Uint8Array | null>;
 
   /**
-   * Tell the workflow and task drivers to stop, without waiting for them.
-   * They start no new polls but still hand over, for their shutdown grace,
-   * what the polls they already had out bring back; keep polling workflow and
-   * task slots until `serviceShutdown` has returned.
+   * Record a heartbeat from a running task's code, with the JSON encoding of
+   * its details, sent with the next heartbeat due; says whether the task has
+   * been asked to cancel.
    */
-  serviceRequestShutdown(service: NativeServiceHandle): void;
+  hostHeartbeat(
+    host: NativeHostHandle,
+    token: Uint8Array,
+    details?: Uint8Array
+  ): { cancelRequested: boolean };
 
   /**
-   * Shutdown service gracefully
+   * Resolves `true` once a running task is asked to cancel, and `false` once
+   * its outcome is reported (at once for a task the host does not hold).
    */
-  serviceShutdown(service: NativeServiceHandle): Promise<void>;
+  hostTaskCancelled(host: NativeHostHandle, token: Uint8Array): Promise<boolean>;
 
-  // Pull-model polling: TypeScript loops pull work from sdk-core.
+  /** Report a task's outcome, an encoded `TaskOutcome`. */
+  hostCompleteTask(host: NativeHostHandle, outcome: Uint8Array): Promise<void>;
 
-  /**
-   * Poll for a workflow task from sdk-core (multi-channel fan-out)
-   *
-   * Each TypeScript polling loop should use a different slotIndex (0 to N-1)
-   * to achieve parallel polling without mutex contention.
-   *
-   * Returns JSON string with workflow work or null if no work available (timeout).
-   * Throws once the slot's channel has closed, which happens only after the
-   * workflow driver has stopped: shutdown alone does not end a workflow poll.
-   *
-   * @param service - Service handle
-   * @param slotIndex - Slot index for this polling loop (0 to workflowPollerCount-1)
-   */
-  pollWorkflowTask(service: NativeServiceHandle, slotIndex: number): Promise<string | null>;
+  /** The next actor operation, an encoded `ActorOperation`. */
+  hostNextActorOperation(host: NativeHostHandle): Promise<Uint8Array | null>;
 
-  /**
-   * Poll for a task from sdk-core (multi-channel fan-out)
-   *
-   * Each TypeScript polling loop should use a different slotIndex (0 to N-1)
-   * to achieve parallel polling without mutex contention.
-   *
-   * Returns JSON string with task work or null if no work available (timeout).
-   * Throws if service is shutdown.
-   *
-   * @param service - Service handle
-   * @param slotIndex - Slot index for this polling loop (0 to taskPollerCount-1)
-   */
-  pollTask(service: NativeServiceHandle, slotIndex: number): Promise<string | null>;
+  /** Report an actor operation's result, an encoded `ActorResult`. */
+  hostCompleteActorOperation(host: NativeHostHandle, result: Uint8Array): Promise<void>;
 
-  /**
-   * Get the number of workflow polling slots
-   *
-   * @param service - Service handle
-   * @returns Number of workflow polling slots
-   */
-  getWorkflowSlotCount(service: NativeServiceHandle): number;
-
-  /**
-   * Get the number of task polling slots
-   *
-   * @param service - Service handle
-   * @returns Number of task polling slots
-   */
-  getTaskSlotCount(service: NativeServiceHandle): number;
-
-  /**
-   * Add a session queue — TaskDriver will start polling it immediately.
-   */
-  addSessionQueue(service: NativeServiceHandle, queueName: string): void;
-
-  /**
-   * Remove a session queue — TaskDriver will stop polling it.
-   */
-  removeSessionQueue(service: NativeServiceHandle, queueName: string): void;
-
-  /**
-   * Complete a workflow task by sending result back to sdk-core
-   *
-   * @param service - Service handle
-   * @param workflowId - Workflow ID
-   * @param executionId - Execution/run ID
-   * @param resultJson - JSON string of ExecutionResult
-   * @param taskToken - Base64-encoded task token
-   * @param streamEntryId - Optional stream entry ID
-   */
-  completeWorkflowTask(
-    service: NativeServiceHandle,
-    workflowId: string,
+  /** One key of an actor's state; `null` when it is not set. */
+  hostGetActorState(
+    host: NativeHostHandle,
+    actorName: string,
+    key: string,
     executionId: string,
-    resultJson: string,
-    taskToken: string,
-    streamEntryId: string | null
-  ): Promise<void>;
+    stateKey: string
+  ): Promise<{ value: Uint8Array; version: string } | null>;
 
   /**
-   * Complete a task by sending result back to sdk-core
-   *
-   * @param service - Service handle
-   * @param taskToken - Base64-encoded task token
-   * @param resultJson - JSON string of result
+   * Write one key of an actor's state; resolves its new version. With
+   * `expectedVersion`, the write is refused unless the stored version is that one.
    */
-  completeTask(service: NativeServiceHandle, taskToken: string, resultJson: string): Promise<void>;
-
-  /**
-   * Fail a workflow task by sending error to sdk-core
-   *
-   * @param service - Service handle
-   * @param workflowId - Workflow ID
-   * @param executionId - Execution/run ID
-   * @param taskToken - Base64-encoded task token
-   * @param errorMessage - Error message
-   * @param streamEntryId - Optional stream entry ID
-   */
-  failWorkflowTask(
-    service: NativeServiceHandle,
-    workflowId: string,
+  hostSetActorState(
+    host: NativeHostHandle,
+    actorName: string,
+    key: string,
     executionId: string,
-    taskToken: string,
-    errorMessage: string,
-    streamEntryId: string | null
-  ): Promise<void>;
-
-  /**
-   * Fail a task by sending error to sdk-core
-   *
-   * @param service - Service handle
-   * @param taskToken - Base64-encoded task token
-   * @param errorMessage - Error message
-   * @param errorType - The type a retry policy's non-retryable list is matched
-   *   against; `TaskExecutionError` when omitted
-   * @param nonRetryable - Never retry, whatever the policy allows
-   */
-  failTask(
-    service: NativeServiceHandle,
-    taskToken: string,
-    errorMessage: string,
-    errorType?: string,
-    nonRetryable?: boolean
-  ): Promise<void>;
-
-  /**
-   * Record a heartbeat from a running task's code. The native worker heartbeats
-   * every task on its own; this is sent with the next heartbeat due, never
-   * waiting. Resolves JSON `{ "cancelRequested": boolean }`.
-   *
-   * @param service - Service handle
-   * @param taskToken - Base64-encoded task token
-   * @param details - Optional JSON progress details
-   */
-  heartbeatTask?(
-    service: NativeServiceHandle,
-    taskToken: string,
-    details?: string
+    stateKey: string,
+    value: Uint8Array,
+    expectedVersion?: string
   ): Promise<string>;
 
-  /**
-   * Resolves `true` once the engine asks a running task to stop, and `false`
-   * once its outcome is reported (or at once for a task not running here).
-   *
-   * @param service - Service handle
-   * @param taskToken - Base64-encoded task token
-   */
-  waitTaskCancelled?(service: NativeServiceHandle, taskToken: string): Promise<boolean>;
-
-  // Push-model entry points. The native side exports them, but they throw if
-  // called; use the pull model (serviceStart + pollWorkflowTask/pollTask).
-
-  /**
-   * Run service with TypeScript executor handlers
-   *
-   * @deprecated Use serviceStart + pollWorkflowTask/pollTask instead (pull model)
-   */
-  serviceRunWithHandlers?(
-    service: NativeServiceHandle,
-    workflowExecutor: (request: ExecutionRequest) => Promise<ExecutionResult>,
-    taskExecutor: (request: ExecutionRequest) => Promise<ExecutionResult>,
-    workflowPollerCount: number,
-    taskPollerCount: number
-  ): Promise<void>;
-
-  /**
-   * Register error callback for fatal errors
-   *
-   * @deprecated Errors are returned directly from the poll and complete methods
-   */
-  serviceRegisterErrorCallback?(
-    service: NativeServiceHandle,
-    callback: (error: string) => void
-  ): void;
-
-  // =========================================================================
-  // Actor operations (optional: a native module built without actor support omits them)
-  // =========================================================================
-
-  /**
-   * Register actor handlers with the server
-   *
-   * @param service - Service handle
-   * @param handlersJson - JSON array of { actor_name, operation, mode }
-   * @param metadataJson - JSON object of key-value metadata
-   * @returns JSON string with { success, registration_id, handlers_registered, error_message }
-   */
-  registerActorHandlers?(
-    service: NativeServiceHandle,
-    handlersJson: string,
-    metadataJson: string
-  ): Promise<string>;
-
-  /**
-   * Poll for an actor operation
-   */
-  pollActorOperation?(service: NativeServiceHandle, slotIndex: number): Promise<string | null>;
-
-  /**
-   * Complete an actor operation
-   */
-  completeActorOperation?(
-    service: NativeServiceHandle,
-    operationId: string,
+  /** Delete one key of an actor's state; resolves whether it was set. */
+  hostDeleteActorState(
+    host: NativeHostHandle,
+    actorName: string,
+    key: string,
     executionId: string,
-    result: Uint8Array,
-    success: boolean,
-    errorMessage?: string
-  ): Promise<void>;
+    stateKey: string
+  ): Promise<boolean>;
+
+  /** The keys of an actor's state that start with `prefix`. */
+  hostActorStateKeys(
+    host: NativeHostHandle,
+    actorName: string,
+    key: string,
+    executionId: string,
+    prefix: string
+  ): Promise<string[]>;
+
+  /**
+   * Stop the worker: it stops claiming work, gives the work running its
+   * shutdown grace to finish, hands back the activations still unanswered,
+   * closes its sessions and deregisters. Pulls then resolve null.
+   */
+  hostShutdown(host: NativeHostHandle): Promise<void>;
 
   /**
    * Invoke an actor operation from the client side
@@ -829,51 +726,6 @@ export interface NativeModule {
     operation: string,
     payload: Uint8Array
   ): Promise<Uint8Array>;
-
-  /**
-   * Get actor state
-   */
-  actorGetState?(
-    service: NativeServiceHandle,
-    actorName: string,
-    key: string,
-    stateKey: string,
-    executionId: string
-  ): Promise<{ value: Uint8Array; exists: boolean }>;
-
-  /**
-   * Set actor state
-   */
-  actorSetState?(
-    service: NativeServiceHandle,
-    actorName: string,
-    key: string,
-    stateKey: string,
-    value: Uint8Array,
-    executionId: string
-  ): Promise<{ success: boolean }>;
-
-  /**
-   * Delete actor state
-   */
-  actorDeleteState?(
-    service: NativeServiceHandle,
-    actorName: string,
-    key: string,
-    stateKey: string,
-    executionId: string
-  ): Promise<{ existed: boolean }>;
-
-  /**
-   * List actor state keys
-   */
-  actorListStateKeys?(
-    service: NativeServiceHandle,
-    actorName: string,
-    key: string,
-    executionId: string,
-    prefix?: string
-  ): Promise<{ keys: string[] }>;
 
   // Workflow handle operations
   /**
@@ -945,8 +797,8 @@ export interface NativeModule {
    */
   workflowHandleRunId(handle: NativeWorkflowHandle): string;
 
-  // The kernel protocol, for checking recorded activations without an engine.
-  // The worker does not use these.
+  // The kernel protocol, for replaying recorded activations without an
+  // engine (contract/replay-check.ts). The worker does not use these.
 
   /**
    * A recorded activation (an encoded `orcher.v1.PollWorkflowExecutionResponse`)
@@ -955,22 +807,10 @@ export interface NativeModule {
   kernelResolve?(pollResponse: Buffer, namespace: string): Buffer;
 
   /**
-   * A recorded activation as the worker hands it to TypeScript today: the JSON
-   * of the execution request, with the journal's times.
-   */
-  legacyExecutionRequest?(pollResponse: Buffer): string;
-
-  /**
    * An encoded `orcher.kernel.v1.RunActivationResult`, as the JSON of the
    * result the workflow driver checks and sends. Throws on a protocol error.
    */
   kernelExecutionResult?(runId: string, result: Buffer): string;
-
-  /**
-   * The JSON TypeScript answers an activation with today, read as the worker
-   * reads it and written back.
-   */
-  legacyExecutionResult?(resultJson: string): string;
 }
 
 /**

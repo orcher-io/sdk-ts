@@ -33,6 +33,9 @@ export type {
   AsyncDisposable,
   NativeClientHandle,
   NativeServiceHandle,
+  NativeHostHandle,
+  HostConfig,
+  HostRegistrations,
   NativeWorkflowHandle,
 } from './types';
 

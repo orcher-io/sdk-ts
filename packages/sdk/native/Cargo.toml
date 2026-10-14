@@ -21,6 +21,9 @@ neon = { version = "1.0", default-features = false, features = ["napi-6", "futur
 # (orcher_sdk_core::proto), so the build has one orcher-proto. To build
 # against local checkouts instead, see .cargo/config.example.toml.
 orcher-sdk-core = "0.14.1"
+# The worker host: one worker's drivers, lifecycle and registration, shared
+# with the Rust and Python SDKs. This crate binds it for TypeScript.
+orcher-sdk-host = "0.14.1"
 
 # gRPC
 tonic = { version = "0.12", features = ["transport", "tls", "tls-native-roots"] }
@@ -33,7 +36,6 @@ futures = "0.3"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-base64 = "0.22"
 
 # Compression, used by the codec bindings
 flate2 = "1.0"

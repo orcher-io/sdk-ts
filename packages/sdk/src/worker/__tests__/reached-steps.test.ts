@@ -8,6 +8,7 @@
  */
 
 import type { WorkflowContext } from '../../workflow/context';
+import type { Command } from '../../core/generated/kernel';
 import {
   FakeEngine,
   activation,
@@ -17,13 +18,9 @@ import {
   taskRef,
 } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
@@ -49,7 +46,7 @@ const statusWatch =
 
 /** Run `activate` `times` times against `engine`, journaling what each asks. */
 async function advance(
-  activate: (engine: FakeEngine) => Promise<Array<Record<string, any>>>,
+  activate: (engine: FakeEngine) => Promise<Command[]>,
   engine: FakeEngine,
   times: number
 ): Promise<void> {
@@ -64,7 +61,7 @@ describe('reached steps', () => {
 
     const result = await activation(statusWatch(5))(engine);
     expect(issuedSteps(result.commands)).toEqual([['timer', 'event_timeout_status_4', '']]);
-    expect(result.reached_steps).toEqual([
+    expect(result.reached).toEqual([
       'event_timeout_status_1',
       'applyStatus_0',
       'event_timeout_status_2',

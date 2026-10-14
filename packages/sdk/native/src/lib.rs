@@ -5,7 +5,7 @@
 //!     ↓
 //! Neon (this crate, loaded as orcher_core.node)
 //!     ↓
-//! orcher-sdk-core (Rust)
+//! orcher-sdk-host (the worker)    orcher-sdk-core (the client, codecs, the kernel)
 //! ```
 //!
 //! The functions exported in `main` are the whole JavaScript surface of the binding.
@@ -20,17 +20,15 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use tracing_subscriber::{fmt, EnvFilter};
 
-mod actor;
 mod client;
 mod codec;
 mod error;
 mod error_code;
-mod journal_times;
+mod host;
 mod kernel;
 mod runtime;
 mod types;
 mod utils;
-mod worker;
 
 /// Whether `initialize` has run in this process.
 static INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
@@ -96,50 +94,30 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("clientSearchWorkflows", client::search_workflows)?;
     cx.export_function("clientClose", client::close)?;
 
-    // Worker ("service" in the exported names)
-    cx.export_function("serviceCreate", worker::create)?;
-    cx.export_function("serviceStart", worker::start)?;
-    cx.export_function("serviceShutdown", worker::shutdown)?;
-    cx.export_function("serviceRequestShutdown", worker::request_shutdown)?;
-
-    // Pull-model polling and completion. Each TypeScript polling loop passes its own
-    // slot index, so loops poll in parallel.
-    cx.export_function("pollWorkflowTask", worker::poll_workflow_task)?;
-    cx.export_function("pollTask", worker::poll_task)?;
-    cx.export_function("completeWorkflowTask", worker::complete_workflow_task)?;
-    cx.export_function("completeTask", worker::complete_task)?;
-    cx.export_function("failWorkflowTask", worker::fail_workflow_task)?;
-    cx.export_function("failTask", worker::fail_task)?;
-    cx.export_function("heartbeatTask", worker::heartbeat_task)?;
-    cx.export_function("waitTaskCancelled", worker::wait_task_cancelled)?;
-
-    // Slot counts, which tell TypeScript how many polling loops to start.
-    cx.export_function("getWorkflowSlotCount", worker::get_workflow_slot_count)?;
-    cx.export_function("getTaskSlotCount", worker::get_task_slot_count)?;
-
-    // Session queues
-    cx.export_function("addSessionQueue", worker::add_session_queue)?;
-    cx.export_function("removeSessionQueue", worker::remove_session_queue)?;
-
-    // Deprecated, kept for compatibility: one is a no-op, the other always rejects.
-    cx.export_function("serviceRunWithHandlers", worker::service_run_with_handlers)?;
+    // The worker: a binding over the worker host. Work crosses as protobuf.
+    cx.export_function("hostStart", host::host_start)?;
+    cx.export_function("hostNextActivation", host::host_next_activation)?;
+    cx.export_function("hostCompleteActivation", host::host_complete_activation)?;
+    cx.export_function("hostNextTask", host::host_next_task)?;
+    cx.export_function("hostHeartbeat", host::host_heartbeat)?;
+    cx.export_function("hostTaskCancelled", host::host_task_cancelled)?;
+    cx.export_function("hostCompleteTask", host::host_complete_task)?;
+    cx.export_function("hostNextActorOperation", host::host_next_actor_operation)?;
     cx.export_function(
-        "serviceRegisterErrorCallback",
-        worker::register_error_callback,
+        "hostCompleteActorOperation",
+        host::host_complete_actor_operation,
     )?;
+    cx.export_function("hostGetActorState", host::host_get_actor_state)?;
+    cx.export_function("hostSetActorState", host::host_set_actor_state)?;
+    cx.export_function("hostDeleteActorState", host::host_delete_actor_state)?;
+    cx.export_function("hostActorStateKeys", host::host_actor_state_keys)?;
+    cx.export_function("hostShutdown", host::host_shutdown)?;
 
-    // Actors
-    cx.export_function("registerActorHandlers", actor::register_actor_handlers)?;
-    cx.export_function("pollActorOperation", actor::poll_actor_operation)?;
-    cx.export_function("completeActorOperation", actor::complete_actor_operation)?;
+    // Actors, client side
     cx.export_function(
         "clientInvokeActorOperation",
-        actor::client_invoke_actor_operation,
+        client::client_invoke_actor_operation,
     )?;
-    cx.export_function("actorGetState", actor::actor_get_state)?;
-    cx.export_function("actorSetState", actor::actor_set_state)?;
-    cx.export_function("actorDeleteState", actor::actor_delete_state)?;
-    cx.export_function("actorListStateKeys", actor::actor_list_state_keys)?;
 
     // Workflow handles
     cx.export_function("workflowHandleGetResult", client::get_workflow_result)?;
@@ -171,12 +149,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("codecChainDecode", codec::codec_chain_decode)?;
     cx.export_function("codecChainLen", codec::codec_chain_len)?;
 
-    // The kernel protocol, for checking recorded activations without an
-    // engine; the worker does not use these.
+    // The kernel protocol, for replaying recorded activations without an
+    // engine (contract/replay-check.ts).
     cx.export_function("kernelResolve", kernel::kernel_resolve)?;
-    cx.export_function("legacyExecutionRequest", kernel::legacy_execution_request)?;
     cx.export_function("kernelExecutionResult", kernel::kernel_execution_result)?;
-    cx.export_function("legacyExecutionResult", kernel::legacy_execution_result)?;
 
     tracing::info!("ORCHER Core Native module loaded successfully");
 

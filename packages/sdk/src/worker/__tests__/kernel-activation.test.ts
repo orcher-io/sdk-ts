@@ -2,8 +2,8 @@
  * A workflow activation as the kernel protocol carries it: the run's history
  * resolved into a `RunActivation`, answered with a `RunActivationResult`.
  *
- * The recorded-activation check (`contract/kernel-equivalence.ts`) holds this
- * path equal to the worker's on real runs; these pin the rules it rests on.
+ * The replay check (`contract/replay-check.ts`) holds this path to the answers
+ * recorded from real runs; these pin the rules it rests on.
  */
 
 import { Worker } from '../worker';
@@ -18,13 +18,9 @@ import {
 } from '../../core/generated/kernel';
 import { taskRef } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 

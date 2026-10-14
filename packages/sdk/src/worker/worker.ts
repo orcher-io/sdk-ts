@@ -15,7 +15,7 @@ import { tlsForUrl } from '../core/tls';
 import { durationToMillis } from '../workflow/types';
 import { toPayload } from '../core/bridge/payload';
 import { getNativeModule } from '../core/native';
-import type { ClientConfig, NativeServiceHandle } from '../core/types';
+import type { ClientConfig, HostConfig, HostRegistrations, NativeHostHandle } from '../core/types';
 import { OrcherContainer } from '../di/container';
 import { globalRegistry as diGlobalRegistry } from '../di/registry';
 import { getWorkflowName } from '../di/decorators/workflow';
@@ -25,10 +25,8 @@ import { isTaskHandler } from '../di/decorators/tasks';
 import { ActorExecutor } from './actor-executor';
 import type { ActorStateClient } from '../actor/context';
 import { WorkerError, describeTaskFailure } from './errors';
-import { TASK_FAILED_SENTINEL_KEY } from '../errors';
 import { Semaphore } from './semaphore';
 import { WorkerBuilder } from './worker-builder';
-import { SessionManager } from './session';
 import { TaskExecutor, type TaskHeartbeatBinding } from './task-executor';
 import {
   WorkerState,
@@ -43,7 +41,6 @@ import {
   type ServiceEventHandler,
   type Logger,
   type ExecutionRequest,
-  type JournalTimes,
   type WorkflowDefinition,
   type TaskDefinition,
 } from './types';
@@ -58,28 +55,33 @@ import {
   type HandlerUpdateResponse,
   type LoadedActivation,
 } from './activation';
-import type { RunActivation, RunActivationResult } from '../core/generated/kernel';
+import { FailureCode, RunActivation, RunActivationResult } from '../core/generated/kernel';
+import {
+  ActorOperation as HostActorOperation,
+  ActorResult,
+  TaskAssignment,
+  TaskOutcome,
+} from '../core/generated/host';
+import { ActorOperation as ActorServiceOperation } from '../core/generated/actor_service';
 
 /**
- * How long shutdown waits for the workflow and task polling loops to end once
- * the native service has stopped. They normally end at once; this only bounds a
- * poll that never answers.
+ * How long shutdown waits for the pull loops to end once the worker host has
+ * stopped. They end at once, since every pull then resolves null; this only
+ * bounds a pull that never answers.
  */
-const DRIVER_POLLER_STOP_TIMEOUT_MS = 5000;
+const PULL_LOOP_STOP_TIMEOUT_MS = 5000;
 
-/**
- * Whether a workflow or task poll failed because the native side has let go of
- * the slot: its channel closed once its driver stopped, or the service
- * was torn down. Either way there is nothing left to poll.
- */
-function isDriverSlotClosed(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes('Workflow slot channel closed') ||
-    message.includes('Task slot channel closed') ||
-    message.includes('Service not started')
-  );
-}
+/** The SDK's version, reported to the engine when the worker registers. */
+const SDK_VERSION: string = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('../../package.json').version as string;
+  } catch {
+    return '';
+  }
+})();
+
+const encoder = new TextEncoder();
 
 /**
  * The declared release, defaulting from the environment.
@@ -95,44 +97,14 @@ function resolveVersionId(explicit?: string): string | undefined {
   return value && value.trim() !== '' ? value : undefined;
 }
 
-/** The failure kinds the engine accepts on a completion. */
-const EXECUTION_ERROR_TYPES = new Set([
-  'NonDeterminism',
-  'WorkflowCode',
-  'Timeout',
-  'TaskFailed',
-  'Cancelled',
-  'InternalError',
-]);
-
 /**
- * A duration in milliseconds as sdk-core deserializes a `Duration`.
- */
-function msToDuration(ms: number): { secs: number; nanos: number } {
-  return { secs: Math.floor(ms / 1000), nanos: Math.round((ms % 1000) * 1_000_000) };
-}
-
-/**
- * Coerce a failure kind to one the engine can parse.
+ * Runs the registered workflows, tasks and actors on the worker host.
  *
- * The engine rejects the entire completion if the kind is not one it accepts,
- * and answers with a parse error about an enum variant, so the workflow's real
- * message is lost. An error class reporting its own name, such as
- * `WorkflowError`, is not an accepted kind.
- *
- * Anything unrecognized is reported as `WorkflowCode`, which is what a throw
- * from a workflow is.
- */
-function toExecutionErrorType(kind: unknown): string {
-  return typeof kind === 'string' && EXECUTION_ERROR_TYPES.has(kind) ? kind : 'WorkflowCode';
-}
-
-/**
- * Polls the Orcher engine for workflow and task work and runs the registered handlers.
- *
- * Polling starts when the worker is constructed. `run()` connects the worker's
- * client and fails if the pollers could not start; `shutdown()` drains in-flight
- * work and stops polling.
+ * The worker host (`orcher-sdk-host`, in the native module) polls the engine,
+ * reports results, registers the worker and runs its sessions; the worker
+ * pulls the work it hands over, as much at a time as it is configured to run,
+ * runs the handlers and hands back the outcomes. `run()` starts the host and
+ * fails if it cannot start; `shutdown()` drains it.
  *
  * @example
  * ```typescript
@@ -190,21 +162,13 @@ export class Worker {
   private readonly logger: Logger;
 
   private state: WorkerState;
-  /**
-   * Settles when the native drivers have started polling, or rejects with why
-   * they could not. Awaited by `run()`, so a worker whose pollers never came up
-   * fails to start instead of reporting itself running.
-   */
-  private driversStarted: Promise<void> = Promise.resolve();
   private client: Client | null = null;
-  private nativeService: NativeServiceHandle | null = null;
-  // Per-poller native service handles, each with a unique identity so that
-  // pollers do not conflict when claiming work.
-  private pollerServiceHandles: NativeServiceHandle[] = [];
+  /** The running worker host, from `run()` until `shutdown()`. */
+  private host: NativeHostHandle | null = null;
+  /** The loops pulling work from the host; they end once it has stopped. */
+  private pullLoops: Promise<void>[] = [];
   private startTime: Date | null = null;
   private stopTime: Date | null = null;
-
-  private sessionManager: SessionManager | null = null;
 
   private stats = {
     workflowsExecuted: 0,
@@ -221,12 +185,10 @@ export class Worker {
   private readonly workflowSemaphore: Semaphore;
   private readonly taskSemaphore: Semaphore;
 
+  /** Room for workflow activations: a pull is made only with room to run what it brings. */
+  private readonly workflowRoom: Semaphore;
+
   private shutdownPromise: Promise<void> | null = null;
-  private pullModelShutdown = false;
-  // The workflow and task polling loops outlive `pullModelShutdown`: see
-  // `runWorkflowPollingLoop`. Set once they must stop regardless.
-  private driverPollingStopped = false;
-  private driverPollingLoops: Promise<void>[] = [];
 
   private readonly workflowMap: Map<string, any>;
   private readonly taskMap: Map<string, any>;
@@ -240,14 +202,10 @@ export class Worker {
   private readonly container: OrcherContainer;
 
   /**
-   * Create a worker and start polling.
-   *
-   * Polling begins here, before `run()` is called; `run()` then reports whether
-   * the pollers came up.
+   * Create a worker. It connects to nothing until `run()`.
    *
    * @param options - Worker configuration options
-   * @throws {WorkerError} If a required option is missing or invalid, or the
-   *   native service cannot be created.
+   * @throws {WorkerError} If a required option is missing or invalid.
    *
    * @example
    * ```typescript
@@ -326,6 +284,7 @@ export class Worker {
     }
 
     this.workflowSemaphore = new Semaphore(this.options.maxConcurrentWorkflows);
+    this.workflowRoom = new Semaphore(this.options.maxConcurrentWorkflows);
     this.taskSemaphore = new Semaphore(this.options.maxConcurrentTasks);
     this.actorSemaphore = new Semaphore(options.maxConcurrentActorOperations ?? 100);
 
@@ -345,7 +304,7 @@ export class Worker {
       enableTimeout: true,
     });
 
-    // The executor's own heartbeat timer is off: the native worker heartbeats
+    // The executor's own heartbeat timer is off: the worker host heartbeats
     // every running task itself, and heartbeats a handler records reach it
     // through `taskHeartbeatBinding`.
     this.taskExecutor = new TaskExecutor({
@@ -369,11 +328,6 @@ export class Worker {
     }
 
     this.logger.info(`Service created with ID: ${this.workerId}`);
-    this.logger.info(`Runtime mode: Direct-Bindings (Rust polling)`);
-
-    // Polling starts during construction, not in run(). run() waits for the
-    // pollers and fails if they could not start.
-    this.initializeEagerPolling();
   }
 
   /**
@@ -509,13 +463,14 @@ export class Worker {
   /**
    * Start the worker.
    *
-   * Polling began when the worker was constructed. `run()` connects the worker's
-   * client to the engine, waits for the pollers to come up, marks the worker
-   * running and emits `started`. It resolves once the worker has started; it does
-   * not wait for shutdown. If the pollers could not start, `run()` rejects
-   * instead of reporting a worker that never polls.
+   * Connects the worker's client, starts the worker host (which polls the
+   * engine, registers the worker and its actor handlers, and runs its
+   * sessions) and starts pulling the work it hands over. Resolves once the
+   * worker has started; it does not wait for shutdown. Rejects when the host
+   * cannot start: the engine cannot be reached, nothing is registered, or the
+   * actor service refuses the worker's actor handlers.
    *
-   * @throws {WorkerError} If the worker is not stopped, or fails to connect or start polling
+   * @throws {WorkerError} If the worker is not stopped, or fails to start
    *
    * @example
    * ```typescript
@@ -532,15 +487,12 @@ export class Worker {
     this.state = WorkerState.STARTING;
 
     try {
-      // The native service was already created in the constructor.
-      this.logger.info('Connecting to orchestrator...');
-
       const clientConfig: ClientConfig = {
         serverUrl: this.options.serverUrl,
         namespace: this.options.namespace,
         identity: this.options.identity,
-        // The worker's own client reaches the same server the pollers do,
-        // so it carries the same credential and the same TLS setting.
+        // The worker's own client reaches the same server the host does, so
+        // it carries the same credential and the same TLS setting.
         apiKey: this.options.apiKey,
         tls: this.options.tls,
       };
@@ -548,23 +500,23 @@ export class Worker {
       this.client = new Client(clientConfig);
       await this.client.connect();
 
-      this.logger.info('Connected to orchestrator successfully');
-
-      // The pollers were started in the constructor; this is where their
-      // outcome is judged. If they could not connect, that is the error the
-      // caller gets — not a worker that says it is running and never polls.
-      await this.driversStarted;
-
-      await this.registerWorker();
+      const host = await getNativeModule().hostStart(
+        JSON.stringify(this.hostConfig()),
+        JSON.stringify(this.hostRegistrations())
+      );
+      this.host = host;
+      this.startPullLoops(host);
 
       this.state = WorkerState.RUNNING;
       this.startTime = new Date();
       this.stopTime = null;
 
-      this.logger.info('Service started successfully (polling began during initialization)');
+      this.logger.info('Service started: the worker host is polling');
       this.emit('started');
     } catch (error) {
       this.state = WorkerState.STOPPED;
+      this.client?.close();
+      this.client = null;
       this.logger.error('Failed to start service:', error);
       throw new WorkerError(
         `Failed to start service: ${error instanceof Error ? error.message : String(error)}`
@@ -576,25 +528,26 @@ export class Worker {
    * Shut the worker down gracefully.
    *
    * Shutdown runs in this order:
-   * 1. The native drivers stop starting new polls.
-   * 2. In-flight executions get up to the timeout to complete (skipped with `force`).
-   * 3. The native service stops, and the polling loops end.
+   * 1. The worker host stops claiming work. Work its polls already brought
+   *    back is still handed over and run.
+   * 2. Running work gets the worker's `shutdownGraceTime` to finish. Workflow
+   *    activations still unanswered after it are handed back to the engine for
+   *    another worker; tasks and actor operations still running are left to
+   *    their timeouts, since the engine cannot take them back.
+   * 3. The host closes its sessions and deregisters the worker, and the pull
+   *    loops end.
    * 4. The DI container is disposed and the worker emits `stopped`.
    *
    * Concurrent calls share one shutdown. Calling it on a stopped worker does nothing.
    *
-   * @param options - Shutdown configuration
+   * @param options - Shutdown configuration. The grace is fixed when the
+   *   worker starts (`shutdownGraceTime`); `timeout` and `force` do not
+   *   shorten it.
    *
    * @example
    * ```typescript
-   * // Graceful shutdown with the default timeout
+   * // Running work gets the worker's shutdownGraceTime
    * await worker.shutdown();
-   *
-   * // Do not wait for in-flight executions
-   * await worker.shutdown({ force: true });
-   *
-   * // Custom timeout
-   * await worker.shutdown({ timeout: 60000 });
    * ```
    */
   async shutdown(options?: ShutdownOptions): Promise<void> {
@@ -828,956 +781,365 @@ export class Worker {
   }
 
   /**
-   * Register worker with orchestrator
+   * The worker host's configuration, from this worker's options. Options left
+   * unset keep the host's defaults.
    */
-  private async registerWorker(): Promise<void> {
-    // Worker registration is handled automatically by the native WorkerRegistrationDriver
-    // which is spawned in serviceStart(). It registers on startup and sends periodic
-    // heartbeats to the server. No action needed here.
-    this.logger.info(
-      'Worker registration handled by native driver (automatic register + heartbeat)'
-    );
+  private hostConfig(): HostConfig {
+    const o = this.options;
+    return {
+      serverUrl: o.serverUrl,
+      taskQueue: o.taskQueue,
+      namespace: o.namespace,
+      identity: o.identity,
+      apiKey: o.apiKey,
+      organizationId: o.organizationId,
+      versionId: o.versionId,
+      tls: o.tls,
+      maxConcurrentWorkflows: o.maxConcurrentWorkflows,
+      maxConcurrentTasks: o.maxConcurrentTasks,
+      maxConcurrentActorOperations: o.maxConcurrentActorOperations,
+      workflowPollers: o.workflowPollerCount,
+      taskPollers: o.taskPollerCount,
+      actorPollers: o.actorPollerCount,
+      shutdownGraceMs: durationToMillis(o.shutdownGraceTime),
+      sdkName: 'typescript',
+      sdkVersion: SDK_VERSION,
+    };
   }
 
   /**
-   * Create the native service and start polling. Called from the constructor.
+   * What the worker runs: its workflow and task types, and the operations of
+   * the actors in the registry with their modes.
    */
-  private initializeEagerPolling(): void {
-    this.logger.info('Initializing eager polling (Pull Model - like Python SDK)...');
+  private hostRegistrations(): HostRegistrations {
+    const actorHandlers: HostRegistrations['actorHandlers'] = [];
+    if (this.actorExecutor) {
+      for (const [actorName] of diGlobalRegistry.getAllActors()) {
+        for (const op of diGlobalRegistry.getOperationsForActor(actorName)) {
+          actorHandlers.push({ actorName, operation: op.name, shared: op.mode === 'shared' });
+        }
+      }
+    }
+    return {
+      workflowTypes: this.options.workflows.map((w: any) => w.name),
+      taskTypes: this.options.tasks.map((t: any) => t.name),
+      actorHandlers,
+    };
+  }
 
+  /**
+   * Pull workflow activations, tasks and actor operations from the host, each
+   * kind as many at a time as the worker runs. A worker that runs none of a
+   * kind has its loop end at once.
+   */
+  private startPullLoops(host: NativeHostHandle): void {
+    const native = getNativeModule();
+    this.pullLoops = [
+      this.pullLoop(
+        'workflow',
+        this.workflowRoom,
+        () => native.hostNextActivation(host),
+        (bytes) => this.handleActivation(host, bytes)
+      ),
+      this.pullLoop(
+        'task',
+        this.taskSemaphore,
+        () => native.hostNextTask(host),
+        (bytes) => this.handleTask(host, bytes)
+      ),
+      this.pullLoop(
+        'actor',
+        this.actorSemaphore,
+        () => native.hostNextActorOperation(host),
+        (bytes) => this.handleActorOperation(host, bytes)
+      ),
+    ];
+  }
+
+  /**
+   * Take room, pull one piece of work, run it without waiting, and give the
+   * room back once it has been answered. Ends when the host has stopped.
+   */
+  private async pullLoop(
+    kind: string,
+    room: Semaphore,
+    next: () => Promise<Uint8Array | null>,
+    run: (bytes: Uint8Array) => Promise<void>
+  ): Promise<void> {
+    for (;;) {
+      await room.acquire();
+      let bytes: Uint8Array | null;
+      try {
+        bytes = await next();
+      } catch (error) {
+        room.release();
+        this.logger.error(`[${kind}] Pulling work from the worker host failed; stopping`, error);
+        return;
+      }
+      if (bytes === null) {
+        room.release();
+        this.logger.debug(`[${kind}] The worker host has stopped; no more work`);
+        return;
+      }
+      void run(bytes)
+        .catch((error) => this.logger.error(`[${kind}] Unhandled error running work:`, error))
+        .finally(() => room.release());
+    }
+  }
+
+  /** Run one workflow activation and hand its answer to the host. */
+  private async handleActivation(host: NativeHostHandle, bytes: Uint8Array): Promise<void> {
+    const activation = RunActivation.fromBinary(bytes);
+    const answer = await this.runActivation(activation);
     try {
-      const nativeModule = getNativeModule();
-      this.nativeService = nativeModule.serviceCreate({
-        serverUrl: this.options.serverUrl,
+      await getNativeModule().hostCompleteActivation(host, RunActivationResult.toBinary(answer));
+    } catch (error) {
+      this.logger.error(
+        `[Workflow] The answer to ${activation.run?.workflowId}/${activation.run?.runId} was not taken:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * How a running task's heartbeats and cancellation reach the worker host,
+   * which also heartbeats every task on its own.
+   */
+  private taskHeartbeatBinding(host: NativeHostHandle, token: Uint8Array): TaskHeartbeatBinding {
+    const native = getNativeModule();
+    return {
+      record: async (details?: unknown) =>
+        native.hostHeartbeat(
+          host,
+          token,
+          details === undefined ? undefined : encoder.encode(JSON.stringify(details))
+        ).cancelRequested === true,
+      cancelled: async () => (await native.hostTaskCancelled(host, token)) === true,
+    };
+  }
+
+  /** Run one task and report its outcome to the host. */
+  private async handleTask(host: NativeHostHandle, bytes: Uint8Array): Promise<void> {
+    const assignment = TaskAssignment.fromBinary(bytes);
+    const result = await this.runTask(host, assignment);
+    try {
+      await getNativeModule().hostCompleteTask(
+        host,
+        TaskOutcome.toBinary({ token: assignment.token, result })
+      );
+    } catch (error) {
+      this.logger.error(
+        `[Task] The outcome of ${assignment.taskType}/${assignment.taskId} was not taken:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Run a task handler for an assignment: its value, or its failure with the
+   * error type and retryability the engine's retry decision reads. Never throws.
+   */
+  private async runTask(
+    host: NativeHostHandle,
+    assignment: TaskAssignment
+  ): Promise<TaskOutcome['result']> {
+    const failed = (message: string, errorType: string, nonRetryable: boolean) => ({
+      oneofKind: 'failure' as const,
+      failure: {
+        message,
+        errorType,
+        nonRetryable,
+        code: FailureCode.APPLICATION,
+        details: new Uint8Array(),
+      },
+    });
+
+    const taskDef = this.taskMap.get(assignment.taskType);
+    if (!taskDef) {
+      this.logger.error(`[Task] Task not registered: ${assignment.taskType}`);
+      return failed(`Task not registered: ${assignment.taskType}`, 'TaskExecutionError', false);
+    }
+
+    const run = assignment.run;
+    const millis = (d?: { seconds: string; nanos: number }) =>
+      d ? Number(d.seconds) * 1000 + Math.floor(d.nanos / 1_000_000) : undefined;
+    // The task's input arrives as the bytes of its JSON encoding; the executor
+    // decodes them into the handler's one argument.
+    const request: ExecutionRequest = {
+      executionId: assignment.taskId || 'unknown',
+      type: assignment.taskType,
+      input: Array.from(assignment.input[0]?.data ?? []),
+      metadata: {
+        workflowId: run?.workflowId || 'unknown',
+        runId: run?.runId || 'unknown',
+        attempt: assignment.attempt || 1,
         namespace: this.options.namespace,
         taskQueue: this.options.taskQueue,
-        identity: this.options.identity,
-        maxConcurrentWorkflows: this.options.maxConcurrentWorkflows,
-        maxConcurrentTasks: this.options.maxConcurrentTasks,
-        organizationId: this.options.organizationId,
-        // Without this the worker accepts a configured apiKey and then polls
-        // unauthenticated.
-        apiKey: this.options.apiKey,
-        // Without this the release is accepted but never sent, so no
-        // execution binds to it.
-        versionId: this.options.versionId,
-        // The driver reads `tls` from here; without it the worker cannot reach
-        // a TLS endpoint at all.
-        tls: this.options.tls,
-      });
-
-      this.logger.info('Native service handle created');
-
-      this.sessionManager = new SessionManager(this.nativeService, nativeModule, {
-        maxSessions: 10,
-      });
-
-      // Pull model: this side calls the native poll methods in a loop.
-      this.startPullModelPolling();
-
-      this.logger.info('Eager polling initialized - pull model polling active');
-    } catch (error) {
-      this.logger.error('Failed to initialize eager polling:', error);
-      throw new WorkerError(
-        `Failed to initialize eager polling: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  /**
-   * Start pull-model polling: TypeScript calls the native poll methods in a loop.
-   *
-   * Architecture:
-   * - sdk-core handles gRPC long-polling and state machines
-   * - TypeScript calls pollWorkflowTask/pollTask in a loop to receive work
-   * - TypeScript executes handlers and calls completeWorkflowTask/completeTask
-   *
-   * This is more efficient than a callback (push) model because it needs:
-   * - No Neon event channel marshalling
-   * - No promise callback machinery
-   * - Direct function calls with JSON serialization
-   */
-  private startPullModelPolling(): void {
-    // Started here, judged in run(). The promise is kept so run() can await
-    // it: a worker whose pollers failed to connect must fail to start, not log
-    // "running" and sit idle. The trailing catch only stops an unobserved
-    // rejection from being fatal before run() gets there.
-    const started = this.startPullModelPollingAsync();
-    this.driversStarted = started;
-    started.catch(() => undefined);
-  }
-
-  private async startPullModelPollingAsync(): Promise<void> {
-    const nativeModule = getNativeModule();
-
-    // An older native build may lack the pull-model functions.
-    if (!nativeModule.serviceStart || !nativeModule.pollWorkflowTask || !nativeModule.pollTask) {
-      throw new WorkerError(
-        'Pull model functions not available - ensure native module is up to date'
-      );
-    }
-
-    this.logger.info('Starting pull model polling (like Python SDK)...');
-
-    const workflowPollerCount = this.options.workflowPollerCount ?? 4;
-    const taskPollerCount = this.options.taskPollerCount ?? 4;
-    const actorPollerCount = this.actorExecutor ? (this.options.actorPollerCount ?? 2) : 0;
-
-    if (!this.nativeService) {
-      throw new WorkerError('Native service handle not created');
-    }
-
-    // Register actor handlers with the server before starting drivers
-    let actorRegistrationId: string | undefined;
-    if (actorPollerCount > 0 && nativeModule.registerActorHandlers) {
-      try {
-        actorRegistrationId = await this.registerActorHandlersWithServer(nativeModule);
-      } catch (error) {
-        this.logger.error('Failed to register actor handlers:', error);
-        // Continue without registration — heartbeat will work without registration_id
-      }
-    }
-
-    try {
-      // Start the sdk-core drivers (creates WorkflowDriver, TaskDriver, and optionally ActorDriver)
-      await nativeModule.serviceStart(
-        this.nativeService,
-        workflowPollerCount,
-        taskPollerCount,
-        actorPollerCount > 0 ? actorPollerCount : undefined,
-        actorRegistrationId
-      );
-
-      this.logger.info('sdk-core drivers started successfully with multi-channel fan-out');
-
-      // One polling loop per slot. Each slot has its own channel, so the loops
-      // do not contend on a lock.
-      for (let slot = 0; slot < workflowPollerCount; slot++) {
-        this.driverPollingLoops.push(this.runWorkflowPollingLoop(slot));
-      }
-      for (let slot = 0; slot < taskPollerCount; slot++) {
-        this.driverPollingLoops.push(this.runTaskPollingLoop(slot));
-      }
-
-      // Start actor polling loops if actors are registered
-      if (actorPollerCount > 0) {
-        for (let slot = 0; slot < actorPollerCount; slot++) {
-          void this.runActorPollingLoop(slot);
-        }
-        this.logger.info(`Started ${actorPollerCount} actor polling loops`);
-      }
-
-      this.logger.info(
-        `Started ${workflowPollerCount} workflow polling loops and ${taskPollerCount} task polling loops (multi-channel fan-out, fire-and-forget execution)`
-      );
-    } catch (error) {
-      this.logger.error('Failed to start sdk-core drivers:', error);
-      // Rethrown so run() fails. A worker that cannot poll is not running.
-      throw error;
-    }
-  }
-
-  /**
-   * Register actor handlers with the server via native module.
-   * Returns the registration_id on success.
-   */
-  private async registerActorHandlersWithServer(nativeModule: any): Promise<string | undefined> {
-    const actors = diGlobalRegistry.getAllActors();
-    if (actors.size === 0) return undefined;
-
-    // Build handler list from registry: one entry per (actor, operation) pair
-    const handlers: Array<{ actor_name: string; operation: string; mode: string }> = [];
-    for (const [actorName] of actors) {
-      const operations = diGlobalRegistry.getOperationsForActor(actorName);
-      for (const op of operations) {
-        handlers.push({
-          actor_name: actorName,
-          operation: op.name,
-          mode: op.mode ?? 'exclusive',
-        });
-      }
-    }
-
-    if (handlers.length === 0) {
-      this.logger.warn('Actors registered but no operations found — skipping server registration');
-      return undefined;
-    }
-
-    const metadata: Record<string, string> = {
-      sdk: 'typescript',
-      version: '0.1.0',
+        // How long this attempt may run, as the engine judges it.
+        timeout: millis(assignment.attemptTimeout),
+        // The heartbeat interval the engine will judge this task by, which
+        // `ctx.heartbeatTimeout()` exposes so a handler can pace itself.
+        heartbeatTimeoutMs: millis(assignment.heartbeatTimeout),
+      },
+      cachedStepResults: [],
     };
 
-    this.logger.info(`Registering ${handlers.length} actor handler(s) with server...`);
-
-    const resultJson: string = await nativeModule.registerActorHandlers(
-      this.nativeService,
-      JSON.stringify(handlers),
-      JSON.stringify(metadata)
-    );
-
-    const result = JSON.parse(resultJson);
-
-    if (result.success) {
-      this.logger.info(
-        `Actor handlers registered: ${result.handlers_registered} handler(s), registration_id=${result.registration_id}`
-      );
-      return result.registration_id;
-    } else {
-      this.logger.error(`Actor handler registration failed: ${result.error_message}`);
-      return undefined;
-    }
-  }
-
-  /**
-   * Run the workflow polling loop for one slot.
-   *
-   * Each loop polls its own slot channel, so loops do not contend on a lock.
-   * Workflow tasks are not awaited, so several run concurrently while polling
-   * continues.
-   */
-  private async runWorkflowPollingLoop(slotIndex: number): Promise<void> {
-    const nativeModule = getNativeModule();
-    this.logger.debug(`[Workflow Slot ${slotIndex}] Starting polling loop`);
-
-    // Not bounded by `pullModelShutdown`. During shutdown the workflow driver
-    // still hands over what the polls it already had out bring back, each
-    // claimed on the engine; stopping here first would leave it to wait out
-    // the claim timeout. The loop ends when the native side closes this slot's
-    // channel, once the driver has stopped.
-    while (!this.driverPollingStopped) {
-      try {
-        if (!this.nativeService) {
-          this.logger.debug(`[Workflow Slot ${slotIndex}] Service handle is null, stopping`);
-          break;
-        }
-
-        const workJson = await nativeModule.pollWorkflowTask(this.nativeService, slotIndex);
-
-        if (!workJson) {
-          // The poll timed out with no work.
-          continue;
-        }
-
-        const work = JSON.parse(workJson);
-        const executionRequest = work.execution_request;
-        const workflowId = work.workflow_id;
-        const runId = work.run_id;
-        const taskToken = work.task_token;
-        const streamEntryId = work.stream_entry_id;
-
-        this.logger.debug(
-          `[Workflow Slot ${slotIndex}] Received workflow task: ${workflowId}/${runId}`
-        );
-
-        // Not awaited, so the loop keeps polling while the workflow runs.
-        void this.handleWorkflowTask(
-          nativeModule,
-          executionRequest,
-          workflowId,
-          runId,
-          taskToken,
-          streamEntryId
-        ).catch((error) => {
-          this.logger.error(
-            `[Workflow Slot ${slotIndex}] Unhandled error in workflow ${workflowId}/${runId}:`,
-            error
-          );
-        });
-      } catch (error) {
-        if (this.driverPollingStopped || isDriverSlotClosed(error)) {
-          break; // Expected during shutdown
-        }
-        this.logger.error(`[Workflow Slot ${slotIndex}] Polling error:`, error);
-        // Brief pause before retry to avoid tight error loop
-        await this.sleep(100);
-      }
-    }
-
-    this.logger.debug(`[Workflow Slot ${slotIndex}] Polling loop stopped`);
-  }
-
-  /**
-   * Run one workflow task and report its outcome to sdk-core.
-   *
-   * Called without being awaited, so workflow tasks run concurrently.
-   */
-  private async handleWorkflowTask(
-    nativeModule: any,
-    executionRequest: any,
-    workflowId: string,
-    runId: string,
-    taskToken: string,
-    streamEntryId: string | null
-  ): Promise<void> {
+    this.stats.tasksInProgress++;
     try {
-      const result = await this.executeWorkflowDirectBindings(executionRequest);
-
-      const resultJson = JSON.stringify(result);
-      await nativeModule.completeWorkflowTask(
-        this.nativeService,
-        workflowId,
-        runId,
-        resultJson,
-        taskToken,
-        streamEntryId
+      const result = await this.taskExecutor.execute(
+        taskDef,
+        request,
+        this.taskHeartbeatBinding(host, assignment.token)
       );
-
-      this.logger.debug(`[Workflow Handler] Completed workflow task: ${workflowId}/${runId}`);
-    } catch (execError) {
-      // Send failure back to sdk-core
-      const errorMessage = execError instanceof Error ? execError.message : String(execError);
-      await nativeModule.failWorkflowTask(
-        this.nativeService,
-        workflowId,
-        runId,
-        taskToken,
-        errorMessage,
-        streamEntryId
-      );
-
-      this.logger.error(
-        `[Workflow Handler] Failed workflow task: ${workflowId}/${runId}`,
-        execError
-      );
-    }
-  }
-
-  /**
-   * Run the task polling loop for one slot.
-   *
-   * Each loop polls its own slot channel, so loops do not contend on a lock.
-   * Tasks are not awaited, so several run concurrently while polling continues.
-   */
-  private async runTaskPollingLoop(slotIndex: number): Promise<void> {
-    const nativeModule = getNativeModule();
-    this.logger.debug(`[Task Slot ${slotIndex}] Starting polling loop`);
-
-    // Not bounded by `pullModelShutdown`, for the same reason as the workflow
-    // loop: the task driver still hands over, during shutdown, tasks the engine
-    // already has claimed. The loop ends when the native side closes this
-    // slot's channel, once the driver has stopped.
-    while (!this.driverPollingStopped) {
-      try {
-        if (!this.nativeService) {
-          this.logger.debug(`[Task Slot ${slotIndex}] Service handle is null, stopping`);
-          break;
-        }
-
-        const workJson = await nativeModule.pollTask(this.nativeService, slotIndex);
-
-        if (!workJson) {
-          // The poll timed out with no work.
-          continue;
-        }
-
-        const work = JSON.parse(workJson);
-
-        this.logger.debug(
-          `[Task Slot ${slotIndex}] Received task: ${work.task_type}/${work.task_id}`
-        );
-
-        // Not awaited, so the loop keeps polling while the task runs.
-        void this.handleTask(nativeModule, work).catch((error) => {
-          this.logger.error(
-            `[Task Slot ${slotIndex}] Unhandled error in task ${work.task_type}/${work.task_id}:`,
-            error
-          );
-        });
-      } catch (error) {
-        if (this.driverPollingStopped || isDriverSlotClosed(error)) {
-          break; // Expected during shutdown
-        }
-        this.logger.error(`[Task Slot ${slotIndex}] Polling error:`, error);
-        // Brief pause before retry to avoid tight error loop
-        await this.sleep(100);
+      this.stats.tasksExecuted++;
+      if (result.success) {
+        // The task's own return value, not the execution envelope: it is what
+        // the workflow receives.
+        return {
+          oneofKind: 'value',
+          value: { data: encoder.encode(JSON.stringify(result.result ?? null)), metadata: {} },
+        };
       }
-    }
-
-    this.logger.debug(`[Task Slot ${slotIndex}] Polling loop stopped`);
-  }
-
-  /**
-   * Run one task and report its outcome to sdk-core.
-   *
-   * Called without being awaited, so tasks run concurrently. Internal session
-   * tasks go to the `SessionManager` instead of a registered handler.
-   */
-  private async handleTask(nativeModule: any, work: any): Promise<void> {
-    const taskToken = work.task_token;
-    const taskType = work.task_type;
-    const taskId = work.task_id;
-
-    // The native worker heartbeats the task on its own while it runs, from
-    // the moment it was handed over until its outcome reaches the engine.
-    try {
-      // Internal session tasks are handled by the SessionManager.
-      const { SESSION_CREATE_TASK, SESSION_COMPLETE_TASK } = await import('../workflow/session');
-
-      if (taskType === SESSION_CREATE_TASK && this.sessionManager) {
-        const result = await this.sessionManager.handleCreateSession(
-          work.input,
-          work.task_queue ?? ''
-        );
-        const resultJson = JSON.stringify(result);
-        await nativeModule.completeTask(this.nativeService, taskToken, resultJson);
-        this.logger.debug(`[Session] Created session via ${taskType}/${taskId}`);
-        return;
-      }
-
-      if (taskType === SESSION_COMPLETE_TASK && this.sessionManager) {
-        const result = await this.sessionManager.handleCompleteSession(work.input);
-        const resultJson = JSON.stringify(result);
-        await nativeModule.completeTask(this.nativeService, taskToken, resultJson);
-        this.logger.debug(`[Session] Completed session via ${taskType}/${taskId}`);
-        return;
-      }
-
-      const result = await this.executeTaskDirectBindings(work);
-
-      if (result && result.successful === false) {
-        // The task handler threw or returned a failure: report a task failure to the
-        // engine, not a completion. A failing task reported as a completion is journaled
-        // as completed, and replay never surfaces the failure to the workflow.
-        const errorMessage = result.error?.message || 'Task failed';
-        await nativeModule.failTask(
-          this.nativeService,
-          taskToken,
-          errorMessage,
-          result.error?.type ?? 'TaskExecutionError',
-          result.error?.nonRetryable === true
-        );
-        this.logger.debug(`[Task Handler] Failed task: ${taskType}/${taskId}`);
-      } else {
-        // Send the task's actual output (not the execution envelope) so the workflow
-        // receives the real return value on replay.
-        const resultJson = JSON.stringify(result.output ?? null);
-        await nativeModule.completeTask(this.nativeService, taskToken, resultJson);
-        this.logger.debug(`[Task Handler] Completed task: ${taskType}/${taskId}`);
-      }
-    } catch (execError) {
-      // Send failure back to sdk-core
-      const failure = describeTaskFailure(execError);
-      await nativeModule.failTask(
-        this.nativeService,
-        taskToken,
-        failure.message,
-        failure.type,
-        failure.nonRetryable
-      );
-
-      this.logger.error(`[Task Handler] Failed task: ${taskType}/${taskId}`, execError);
-    }
-  }
-
-  // =========================================================================
-  // Actor Polling and Execution
-  // =========================================================================
-
-  /**
-   * Create an ActorStateClient that bridges to the native module for state RPCs.
-   *
-   * When the native module lacks a state function, the client answers as if no
-   * state exists and writes succeed without being stored.
-   */
-  private createActorStateClient(): ActorStateClient {
-    const nativeModule = getNativeModule();
-    const service = this;
-
-    return {
-      async getState(actorName, key, stateKey, executionId) {
-        if (!service.nativeService) {
-          throw new Error('Native service not initialized');
-        }
-        if (nativeModule.actorGetState) {
-          const result = await nativeModule.actorGetState(
-            service.nativeService,
-            actorName,
-            key,
-            stateKey,
-            executionId
-          );
-          return {
-            value: result?.value ?? new Uint8Array(0),
-            exists: result?.exists ?? false,
-          };
-        }
-        // The native module has no state support: report the key as absent.
-        return { value: new Uint8Array(0), exists: false };
-      },
-
-      async setState(actorName, key, stateKey, value, executionId) {
-        if (!service.nativeService) {
-          throw new Error('Native service not initialized');
-        }
-        if (nativeModule.actorSetState) {
-          const result = await nativeModule.actorSetState(
-            service.nativeService,
-            actorName,
-            key,
-            stateKey,
-            value,
-            executionId
-          );
-          return { success: result?.success ?? true };
-        }
-        return { success: true };
-      },
-
-      async deleteState(actorName, key, stateKey, executionId) {
-        if (!service.nativeService) {
-          throw new Error('Native service not initialized');
-        }
-        if (nativeModule.actorDeleteState) {
-          const result = await nativeModule.actorDeleteState(
-            service.nativeService,
-            actorName,
-            key,
-            stateKey,
-            executionId
-          );
-          return { existed: result?.existed ?? false };
-        }
-        return { existed: false };
-      },
-
-      async listStateKeys(actorName, key, executionId, prefix?) {
-        if (!service.nativeService) {
-          throw new Error('Native service not initialized');
-        }
-        if (nativeModule.actorListStateKeys) {
-          const result = await nativeModule.actorListStateKeys(
-            service.nativeService,
-            actorName,
-            key,
-            executionId,
-            prefix
-          );
-          return { keys: result?.keys ?? [] };
-        }
-        return { keys: [] };
-      },
-    };
-  }
-
-  /**
-   * Run the actor operation polling loop for one slot.
-   *
-   * Operations are not awaited, so several run concurrently while polling
-   * continues. Unlike the workflow and task loops, this one stops as soon as
-   * shutdown begins.
-   */
-  private async runActorPollingLoop(slotIndex: number): Promise<void> {
-    const nativeModule = getNativeModule();
-    this.logger.debug(`[Actor Slot ${slotIndex}] Starting polling loop`);
-
-    while (!this.pullModelShutdown) {
-      try {
-        if (!this.nativeService) {
-          this.logger.debug(`[Actor Slot ${slotIndex}] Service handle is null, stopping`);
-          break;
-        }
-
-        if (!nativeModule.pollActorOperation) {
-          this.logger.debug(`[Actor Slot ${slotIndex}] pollActorOperation not available, stopping`);
-          break;
-        }
-
-        const workJson = await nativeModule.pollActorOperation(this.nativeService, slotIndex);
-
-        if (!workJson) {
-          continue; // The poll timed out with no work.
-        }
-
-        const operation = JSON.parse(workJson);
-
-        this.logger.debug(
-          `[Actor Slot ${slotIndex}] Received actor operation: ${operation.actor_name}.${operation.operation} (key=${operation.key})`
-        );
-
-        // Not awaited, so the loop keeps polling while the operation runs.
-        void this.handleActorOperation(nativeModule, operation).catch((error) => {
-          this.logger.error(`[Actor Slot ${slotIndex}] Unhandled error in actor operation:`, error);
-        });
-      } catch (error) {
-        if (this.pullModelShutdown) {
-          break;
-        }
-        this.logger.error(`[Actor Slot ${slotIndex}] Polling error:`, error);
-        await this.sleep(100);
-      }
-    }
-
-    this.logger.debug(`[Actor Slot ${slotIndex}] Polling loop stopped`);
-  }
-
-  /**
-   * Run one actor operation and report its outcome to the server.
-   */
-  private async handleActorOperation(nativeModule: any, work: any): Promise<void> {
-    if (!this.actorExecutor) {
-      this.logger.error('[Actor Handler] Actor executor not initialized');
-      return;
-    }
-
-    await this.actorSemaphore.acquire();
-    this.stats.actorOperationsInProgress++;
-
-    try {
-      // Convert snake_case from native to camelCase for proto type
-      const operation = {
-        operationId: work.operation_id ?? work.operationId ?? '',
-        actorName: work.actor_name ?? work.actorName ?? '',
-        key: work.key ?? '',
-        operation: work.operation ?? '',
-        payload:
-          work.payload instanceof Uint8Array
-            ? work.payload
-            : typeof work.payload === 'string'
-              ? // The native bridge JSON-encodes payload bytes as base64 —
-                // decode them (text-encoding the base64 chars would hand the
-                // handler garbage bytes instead of its input).
-                Buffer.from(work.payload, 'base64')
-              : new Uint8Array(work.payload ?? []),
-        mode: work.mode ?? 0,
-        executionId: work.execution_id ?? work.executionId ?? '',
-        metadata: work.metadata ?? {},
-      };
-
-      const result = await this.actorExecutor.execute(operation);
-
-      this.stats.actorOperationsExecuted++;
-      this.stats.actorOperationsInProgress--;
-      this.actorSemaphore.release();
-
-      // Complete the operation back to the server
-      if (nativeModule.completeActorOperation) {
-        await nativeModule.completeActorOperation(
-          this.nativeService,
-          operation.operationId,
-          operation.executionId,
-          result.result,
-          result.success,
-          result.error
-        );
-      }
-
-      this.logger.debug(
-        `[Actor Handler] Completed: ${operation.actorName}.${operation.operation} (key=${operation.key})`
+      // A failing task is reported as a failure, not a completion: a completion
+      // is journaled as completed, and replay never surfaces the failure.
+      return failed(
+        result.error?.message || 'Unknown error',
+        result.error?.type ?? 'TaskExecutionError',
+        result.error?.nonRetryable === true
       );
     } catch (error) {
       this.stats.errors++;
-      this.stats.actorOperationsInProgress--;
-      this.actorSemaphore.release();
-
-      this.logger.error('[Actor Handler] Failed:', error);
-
-      // Report failure back to server
-      if (nativeModule.completeActorOperation) {
-        await nativeModule.completeActorOperation(
-          this.nativeService,
-          work.operation_id ?? work.operationId,
-          work.execution_id ?? work.executionId,
-          new Uint8Array(0),
-          false,
-          error instanceof Error ? error.message : String(error)
-        );
-      }
+      this.logger.error(`[Task] Failed task: ${assignment.taskType}/${assignment.taskId}`, error);
+      const failure = describeTaskFailure(error);
+      return failed(failure.message, failure.type, failure.nonRetryable);
+    } finally {
+      this.stats.tasksInProgress--;
     }
   }
 
   /**
-   * Run a workflow activation and convert the result to the shape sdk-core expects.
-   *
-   * Never throws: any failure is returned as an unsuccessful completion.
+   * An actor state client that reads and writes through the worker host, on
+   * its connection, with the worker's credentials.
    */
-  private async executeWorkflowDirectBindings(nativeRequest: any): Promise<any> {
-    try {
-      this.logger.debug(
-        `[DIRECT-BINDINGS] Workflow request received: ${nativeRequest.run_id || nativeRequest.runId}`
-      );
-
-      // Convert the native request to an ExecutionRequest
-      const request = this.convertNativeToServiceRequest(nativeRequest);
-
-      const workflowDef = this.workflowMap.get(request.type);
-      if (!workflowDef) {
-        this.logger.error(`[DIRECT-BINDINGS] Workflow not registered: ${request.type}`);
-        return {
-          run_id: request.executionId,
-          successful: false,
-          commands: [],
-          query_responses: [],
-          update_results: [],
-          error: {
-            message: `Workflow not registered: ${request.type}`,
-            error_type: 'WorkflowCode',
-            // sdk-core's ExecutionError requires this; without it the payload
-            // fails to parse and masks the message above with a JSON error.
-            retryable: false,
-          },
-        };
+  private createActorStateClient(): ActorStateClient {
+    const hostOf = (): NativeHostHandle => {
+      if (!this.host) {
+        throw new WorkerError('The worker is not running');
       }
-
-      await this.workflowSemaphore.acquire();
-      this.stats.workflowsInProgress++;
-
-      try {
-        const result = await this.workflowExecutor.execute(workflowDef, request);
-        this.stats.workflowsExecuted++;
-        this.stats.workflowsInProgress--;
-        this.workflowSemaphore.release();
-
-        this.logger.debug(
-          `[DIRECT-BINDINGS] Workflow completed: ${request.executionId}, commands: ${result.commands?.length || 0}`
+      return this.host;
+    };
+    return {
+      async getState(actorName, key, stateKey, executionId) {
+        const state = await getNativeModule().hostGetActorState(
+          hostOf(),
+          actorName,
+          key,
+          executionId,
+          stateKey
         );
+        return { value: state?.value ?? new Uint8Array(0), exists: state !== null };
+      },
+      async setState(actorName, key, stateKey, value, executionId) {
+        // The host rejects a write the actor service refuses.
+        await getNativeModule().hostSetActorState(
+          hostOf(),
+          actorName,
+          key,
+          executionId,
+          stateKey,
+          value
+        );
+        return { success: true };
+      },
+      async deleteState(actorName, key, stateKey, executionId) {
+        const existed = await getNativeModule().hostDeleteActorState(
+          hostOf(),
+          actorName,
+          key,
+          executionId,
+          stateKey
+        );
+        return { existed };
+      },
+      async listStateKeys(actorName, key, executionId, prefix?) {
+        const keys = await getNativeModule().hostActorStateKeys(
+          hostOf(),
+          actorName,
+          key,
+          executionId,
+          prefix ?? ''
+        );
+        return { keys };
+      },
+    };
+  }
 
-        // Convert TypeScript commands to Rust enum format
-        // TypeScript: {type: "SCHEDULE_TASK", sequence: 0, taskId: "...", ...}
-        // Rust: {"ScheduleTask": {sequence: 0, task_id: "...", ...}}
-        const rustCommands = (result.commands || []).map((cmd: any) => {
-          const cmdType = cmd.type;
-
-          // Map TypeScript command type to Rust variant name
-          const variantMap: Record<string, string> = {
-            SCHEDULE_TASK: 'ScheduleTask',
-            START_TIMER: 'StartTimer',
-            CANCEL_TIMER: 'CancelTimer',
-            COMPLETE_WORKFLOW: 'CompleteWorkflow',
-            FAIL_WORKFLOW: 'FailWorkflow',
-            RECORD_STEP_RESULT: 'RecordStepResult',
-            WAIT_FOR_EVENT: 'WaitForEvent',
-            START_CHILD_WORKFLOW: 'StartChildWorkflow',
-            CANCEL_CHILD_WORKFLOW: 'CancelChildWorkflow',
-            SEND_EVENT: 'SendEvent',
-            RESTART_FRESH: 'RestartFresh',
-          };
-
-          const variantName = variantMap[cmdType] || cmdType;
-
-          // An event to another workflow: the payload is the JSON encoding the
-          // receiving workflow decodes, and any run of the target receives it.
-          if (cmdType === 'SEND_EVENT') {
-            return {
-              SendEvent: {
-                workflow_id: cmd.targetWorkflowId,
-                run_id: null,
-                event_name: cmd.eventName,
-                payload: {
-                  data: Array.from(new TextEncoder().encode(JSON.stringify(cmd.payload ?? null))),
-                  metadata: {},
-                },
-                headers: [],
-              },
-            };
-          }
-          // The engine identifies the child by the id its parent gave it; the run
-          // id is left empty because the child's run changes when it is retried.
-          if (cmdType === 'CANCEL_CHILD_WORKFLOW') {
-            return { CancelChildWorkflow: { workflow_id: cmd.workflowId, run_id: '' } };
-          }
-          // The workflow gave up on a cancellation request it was told of.
-          if (cmdType === 'CANCEL_WORKFLOW') {
-            return { CancelWorkflowExecution: { details: null } };
-          }
-
-          // Create command data with snake_case field names for Rust
-          const cmdData: any = {};
-          for (const [key, value] of Object.entries(cmd)) {
-            if (key === 'type') continue; // Skip the type field
-            // Convert camelCase to snake_case
-            const snakeKey = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-
-            // sdk-core takes the input as Vec<Payload> and sends the engine the
-            // payloads' bytes joined together, so the input is always exactly one
-            // payload: one value, which reaches the task or child as its one
-            // argument. An array spread into several payloads would arrive as their
-            // concatenated JSON ([1, 2, 3] as 123). No input sends no payload.
-            if (key === 'input') {
-              const inputs = value === undefined ? [] : [value];
-              cmdData[snakeKey] = inputs.map((v) => {
-                const payload = toPayload(v);
-                // Convert Uint8Array to regular array for JSON serialization
-                return {
-                  data: Array.from(payload.data),
-                  metadata: Object.fromEntries(
-                    Object.entries(payload.metadata).map(([k, u]) => [k, Array.from(u)])
-                  ),
-                };
-              });
-            } else {
-              cmdData[snakeKey] = value;
-            }
-          }
-
-          // Add required fields with defaults for ScheduleTask command
-          if (cmdType === 'SCHEDULE_TASK') {
-            // sdk-core wants Durations as { secs, nanos }. The generic
-            // camelCase→snake_case pass leaves millisecond numbers alone, so
-            // anything set per-call has to be converted here or serde rejects
-            // the whole batch and the task never reaches the engine.
-            if (typeof cmdData.timeout === 'number') {
-              cmdData.timeout = msToDuration(cmdData.timeout);
-            }
-            if (!cmdData.timeout) {
-              cmdData.timeout = { secs: 300, nanos: 0 }; // 5 minutes default
-            }
-            // Declared heartbeat supervision, or none. `heartbeat_timeout` is
-            // serde(default) in sdk-core, so null and absent both mean none.
-            if (typeof cmdData.heartbeat_timeout_ms === 'number') {
-              cmdData.heartbeat_timeout = msToDuration(cmdData.heartbeat_timeout_ms);
-            } else {
-              cmdData.heartbeat_timeout = null;
-            }
-            delete cmdData.heartbeat_timeout_ms;
-            // The queue-wait limit is its own option, separate from `timeout`;
-            // deriving it from `timeout` would double the effective total.
-            if (typeof cmdData.queue_timeout_ms === 'number') {
-              cmdData.queue_timeout = msToDuration(cmdData.queue_timeout_ms);
-            } else {
-              cmdData.queue_timeout = null;
-            }
-            delete cmdData.queue_timeout_ms;
-            if (cmdData.retry_policy) {
-              // The generic camelCase→snake_case conversion only touches top-level keys, so the
-              // nested RetryPolicy (camelCase, ms intervals) must be converted to sdk-core's
-              // shape here: snake_case fields with Duration { secs, nanos }.
-              const rp = cmdData.retry_policy;
-              const toDuration = (ms: number) => ({
-                secs: Math.floor((ms ?? 0) / 1000),
-                nanos: ((ms ?? 0) % 1000) * 1_000_000,
-              });
-              cmdData.retry_policy = {
-                max_attempts: rp.maxAttempts ?? rp.max_attempts ?? 3,
-                initial_interval: toDuration(rp.initialInterval ?? rp.initial_interval ?? 1000),
-                max_interval: toDuration(rp.maxInterval ?? rp.max_interval ?? 60000),
-                backoff_coefficient: rp.backoffCoefficient ?? rp.backoff_coefficient ?? 2.0,
-                // `nonRetryableErrorTypes` is the typed field; the other two
-                // spellings are accepted from untyped policies.
-                non_retryable_errors:
-                  rp.nonRetryableErrorTypes ??
-                  rp.nonRetryableErrors ??
-                  rp.non_retryable_errors ??
-                  [],
-              };
-            } else {
-              cmdData.retry_policy = null;
-            }
-            if (!cmdData.headers) {
-              cmdData.headers = [];
-            }
-          }
-
-          // sdk-core's StartTimerCommand expects `duration` as a std::time::Duration
-          // ({ secs, nanos }), not `duration_ms`. Convert and drop the ms field, or
-          // the native bridge rejects the batch and the timer never reaches the engine.
-          if (cmdType === 'START_TIMER') {
-            const ms = cmdData.duration_ms ?? 0;
-            delete cmdData.duration_ms;
-            cmdData.duration = {
-              secs: Math.floor(ms / 1000),
-              nanos: (ms % 1000) * 1_000_000,
-            };
-          }
-
-          // sdk-core's StartChildWorkflowCommand expects `orphan_policy`
-          // (OrphanPolicy: Terminate/Cancel/Abandon), not `parent_close_policy`
-          // (ParentClosePolicy: TERMINATE/REQUEST_CANCEL/ABANDON). Map both the
-          // field name and the value; default timeout to None.
-          if (cmdType === 'START_CHILD_WORKFLOW') {
-            const policyMap: Record<string, string> = {
-              TERMINATE: 'Terminate',
-              REQUEST_CANCEL: 'Cancel',
-              ABANDON: 'Abandon',
-            };
-            const pcp = cmdData.parent_close_policy;
-            delete cmdData.parent_close_policy;
-            cmdData.orphan_policy = policyMap[pcp] ?? 'Cancel';
-            // A Duration, like the task timeout above; milliseconds would make
-            // serde reject the batch.
-            cmdData.timeout =
-              typeof cmdData.timeout === 'number' ? msToDuration(cmdData.timeout) : null;
-          }
-
-          // sdk-core's RecordStepResultCommand carries the result as bytes (the
-          // JSON encoding, as the journal returns it on replay) and the attempt
-          // that produced it. A bare value fails to deserialize, and the whole
-          // activation with it.
-          if (cmdType === 'RECORD_STEP_RESULT') {
-            cmdData.result = Array.from(
-              new TextEncoder().encode(JSON.stringify(cmdData.result ?? null))
-            );
-            cmdData.failure = null;
-            cmdData.execution_attempt = 1;
-            // The step's number is already in its name; the command has no field for it.
-            delete cmdData.sequence;
-          }
-
-          // sdk-core's RestartFreshCommand requires workflow_type (a String —
-          // "" means "restart as the same type"); task_queue/timeout are
-          // optional. The generic conversion drops undefined fields, so default
-          // the required ones to present values.
-          if (cmdType === 'RESTART_FRESH') {
-            if (cmdData.workflow_type === undefined || cmdData.workflow_type === null) {
-              cmdData.workflow_type = '';
-            }
-            if (cmdData.task_queue === undefined) {
-              cmdData.task_queue = null;
-            }
-            // Milliseconds on the command, a Duration for sdk-core.
-            cmdData.timeout =
-              typeof cmdData.timeout === 'number' ? msToDuration(cmdData.timeout) : null;
-          }
-
-          // Return in Rust enum format
-          return { [variantName]: cmdData };
-        });
-
-        // Process query and update jobs from the execution request
-        const queryResponses = this.processQueryJobs(nativeRequest, result.context);
-        const updateResults = await this.processUpdateJobs(nativeRequest, result.context);
-
-        // Convert TypeScript ExecutionResult to bridge format for Rust
-        // TypeScript uses: {executionId, success, result, commands, error}
-        // Rust expects: {run_id, successful, commands, error} (snake_case)
-        return {
-          run_id: result.executionId,
-          successful: result.success,
-          commands: rustCommands,
-          query_responses: queryResponses,
-          update_results: updateResults,
-          // The steps the code reached, so sdk-core can tell code that no
-          // longer replays the run; an sdk-core that predates the field
-          // ignores it.
-          reached_steps: result.reachedSteps,
-          error: result.error
-            ? {
-                message: result.error.message || 'Unknown error',
-                error_type: toExecutionErrorType(result.error.type),
-                retryable: false,
-              }
-            : undefined,
-        };
-      } catch (error) {
-        this.stats.errors++;
-        this.stats.workflowsInProgress--;
-        this.workflowSemaphore.release();
-        throw error;
+  /** Run one actor operation and report its result to the host. */
+  private async handleActorOperation(host: NativeHostHandle, bytes: Uint8Array): Promise<void> {
+    const operation = HostActorOperation.fromBinary(bytes);
+    let result: ActorResult['result'];
+    this.stats.actorOperationsInProgress++;
+    try {
+      if (!this.actorExecutor) {
+        throw new WorkerError('No actors are registered with this worker');
       }
+      // The executor takes the operation as the actor service delivers it;
+      // the two protocols number the modes alike.
+      const executed = await this.actorExecutor.execute(
+        ActorServiceOperation.create({
+          operationId: operation.operationId,
+          actorName: operation.actorName,
+          key: operation.key,
+          operation: operation.operation,
+          payload: operation.payload?.data ?? new Uint8Array(0),
+          mode: operation.mode as number,
+          executionId: operation.executionId,
+          metadata: operation.metadata,
+        })
+      );
+      this.stats.actorOperationsExecuted++;
+      result = executed.success
+        ? { oneofKind: 'value', value: { data: executed.result, metadata: {} } }
+        : {
+            oneofKind: 'failure',
+            failure: {
+              message: executed.error ?? 'Actor operation failed',
+              errorType: '',
+              nonRetryable: false,
+              code: FailureCode.APPLICATION,
+              details: new Uint8Array(),
+            },
+          };
     } catch (error) {
-      this.logger.error('[DIRECT-BINDINGS] Workflow execution error:', error);
-      return {
-        run_id: nativeRequest.run_id || nativeRequest.runId || 'unknown',
-        successful: false,
-        commands: [],
-        query_responses: [],
-        update_results: [],
-        error: {
+      this.stats.errors++;
+      this.logger.error('[Actor] Failed:', error);
+      result = {
+        oneofKind: 'failure',
+        failure: {
           message: error instanceof Error ? error.message : String(error),
-          error_type: 'WorkflowCode',
-          retryable: false,
+          errorType: '',
+          nonRetryable: false,
+          code: FailureCode.APPLICATION,
+          details: new Uint8Array(),
         },
       };
+    } finally {
+      this.stats.actorOperationsInProgress--;
+    }
+    try {
+      await getNativeModule().hostCompleteActorOperation(
+        host,
+        ActorResult.toBinary({
+          operationId: operation.operationId,
+          executionId: operation.executionId,
+          result,
+        })
+      );
+    } catch (error) {
+      this.logger.error(
+        `[Actor] The result of ${operation.actorName}.${operation.operation} was not taken:`,
+        error
+      );
     }
   }
 
@@ -1785,14 +1147,13 @@ export class Worker {
    * Run one workflow activation as the kernel protocol carries it, and answer it.
    *
    * The activation's resolutions are loaded into a fresh context, the workflow's
-   * code runs in it as it does for `executeWorkflowDirectBindings`, and the
-   * answer carries every durable call the code made, in issue order, those
+   * code runs in it, and the answer carries every durable call the code made, in issue order, those
    * answered from history marked satisfied. A workflow that fails answers
    * `workflowFailed`; an activation this SDK cannot process, or a command the
    * protocol cannot carry, answers `protocolError`.
    *
-   * The worker does not use this yet: it still runs activations from the jobs
-   * sdk-core derives from the journal.
+   * The worker host hands activations over this way; the replay check
+   * (`contract/replay-check.ts`) runs recorded ones through it too.
    *
    * @internal
    */
@@ -1843,134 +1204,6 @@ export class Worker {
       this.stats.workflowsInProgress--;
       this.workflowSemaphore.release();
     }
-  }
-
-  /**
-   * How a task's heartbeats reach the native worker, which heartbeats every
-   * task on its own. Undefined when the native module does not provide task
-   * heartbeats.
-   */
-  private taskHeartbeatBinding(taskToken: string | undefined): TaskHeartbeatBinding | undefined {
-    const nativeModule = getNativeModule();
-    const svc = this.nativeService;
-    const heartbeatTask = nativeModule.heartbeatTask?.bind(nativeModule);
-    const waitTaskCancelled = nativeModule.waitTaskCancelled?.bind(nativeModule);
-    if (!taskToken || !svc || !heartbeatTask || !waitTaskCancelled) {
-      return undefined;
-    }
-    return {
-      record: async (details?: unknown) => {
-        const answer = await heartbeatTask(
-          svc,
-          taskToken,
-          details === undefined ? undefined : JSON.stringify(details)
-        );
-        const parsed = typeof answer === 'string' ? JSON.parse(answer) : answer;
-        return parsed?.cancelRequested === true;
-      },
-      cancelled: async () => (await waitTaskCancelled(svc, taskToken)) === true,
-    };
-  }
-
-  /**
-   * Run a task and return a task-shaped result.
-   *
-   * Never throws: any failure is returned as `successful: false` with an `error`.
-   */
-  private async executeTaskDirectBindings(nativeRequest: any): Promise<any> {
-    try {
-      this.logger.debug(
-        `[DIRECT-BINDINGS] Task request received: ${nativeRequest.task_type}/${nativeRequest.task_id}`
-      );
-
-      // Convert the native request to an ExecutionRequest
-      const request = this.convertNativeToServiceTaskRequest(nativeRequest);
-
-      const taskDef = this.taskMap.get(request.type);
-      if (!taskDef) {
-        this.logger.error(`[DIRECT-BINDINGS] Task not registered: ${request.type}`);
-        return {
-          successful: false,
-          output: undefined,
-          error: {
-            message: `Task not registered: ${request.type}`,
-            error_type: 'WorkflowCode',
-          },
-        };
-      }
-
-      await this.taskSemaphore.acquire();
-      this.stats.tasksInProgress++;
-
-      try {
-        // Execute task, its heartbeats going to the native worker
-        const result = await this.taskExecutor.execute(
-          taskDef,
-          request,
-          this.taskHeartbeatBinding(nativeRequest.task_token)
-        );
-        this.stats.tasksExecuted++;
-        this.stats.tasksInProgress--;
-        this.taskSemaphore.release();
-
-        this.logger.debug(`[DIRECT-BINDINGS] Task completed: ${request.executionId}`);
-
-        // Return a task-shaped result. On success the caller sends only `output` to
-        // completeTask, so the workflow receives the task's real return value rather
-        // than the execution envelope. On failure it reports `error` via failTask.
-        return {
-          successful: result.success,
-          output: result.success ? result.result : undefined,
-          error: result.success
-            ? null
-            : {
-                message: result.error?.message || 'Unknown error',
-                error_type: 'WorkflowCode',
-                // What the engine's retry decision reads.
-                type: result.error?.type,
-                nonRetryable: result.error?.nonRetryable === true,
-              },
-        };
-      } catch (error) {
-        this.stats.errors++;
-        this.stats.tasksInProgress--;
-        this.taskSemaphore.release();
-        throw error;
-      }
-    } catch (error) {
-      this.logger.error('[DIRECT-BINDINGS] Task execution error:', error);
-      return {
-        successful: false,
-        output: undefined,
-        error: {
-          message: error instanceof Error ? error.message : String(error),
-          error_type: 'WorkflowCode',
-        },
-      };
-    }
-  }
-
-  /**
-   * Process ProcessQuery jobs from the execution request.
-   *
-   * Dispatches each query to the registered handler (via GlobalRegistry @Query()
-   * decorator or WorkflowContext manual registration) and returns query responses
-   * in the bridge format expected by Rust.
-   */
-  private processQueryJobs(nativeRequest: any, context: any): any[] {
-    if (!nativeRequest.jobs || !Array.isArray(nativeRequest.jobs)) {
-      return [];
-    }
-    const asked: AskedQuery[] = [];
-    for (const job of nativeRequest.jobs) {
-      const queryJob = job.ProcessQuery || (job.jobType === 'ProcessQuery' ? job : null);
-      if (!queryJob) continue;
-      asked.push({
-        queryId: queryJob.query_id || queryJob.queryId || '',
-        queryType: queryJob.query_type || queryJob.queryType || '',
-      });
-    }
-    return this.answerQueries(asked, context);
   }
 
   /**
@@ -2028,36 +1261,6 @@ export class Worker {
   }
 
   /**
-   * Process UpdateState jobs from the execution request.
-   *
-   * Dispatches each update to the registered handler (via GlobalRegistry @Update()
-   * decorator) and returns update responses in the bridge format expected by Rust.
-   */
-  private async processUpdateJobs(nativeRequest: any, context: any): Promise<any[]> {
-    if (!nativeRequest.jobs || !Array.isArray(nativeRequest.jobs)) {
-      return [];
-    }
-    const asked: AskedUpdate[] = [];
-    for (const job of nativeRequest.jobs) {
-      const updateJob = job.UpdateState || (job.jobType === 'UpdateState' ? job : null);
-      if (!updateJob) continue;
-      const data: number[] | undefined = updateJob.payload?.data;
-      asked.push({
-        updateId: updateJob.update_id || updateJob.updateId || '',
-        // sdk-core names the update `update_name`.
-        updateType:
-          updateJob.update_name ||
-          updateJob.updateName ||
-          updateJob.update_type ||
-          updateJob.updateType ||
-          '',
-        args: Array.isArray(data) ? Uint8Array.from(data) : undefined,
-      });
-    }
-    return this.answerUpdates(asked, context);
-  }
-
-  /**
    * Apply each update with its registered handler (via GlobalRegistry
    * @Update() decorator), answering in the bridge format expected by Rust.
    */
@@ -2111,506 +1314,37 @@ export class Worker {
   }
 
   /**
-   * Convert native ExecutionRequest format to service ExecutionRequest format
-   *
-   * This bridges the gap between Rust's ExecutionRequest and TypeScript's ExecutionRequest
-   */
-  private convertNativeToServiceRequest(nativeRequest: any): ExecutionRequest {
-    this.logger.debug('[CONVERT] Native request:', JSON.stringify(nativeRequest, null, 2));
-
-    // Extract workflow info from the StartWorkflow job
-    let workflowType = 'unknown';
-    // Undefined until the StartWorkflow job gives one: no input, no argument.
-    let input: any = undefined;
-    let attempt = 1;
-
-    if (nativeRequest.jobs && Array.isArray(nativeRequest.jobs)) {
-      this.logger.debug(`[CONVERT] Found ${nativeRequest.jobs.length} jobs`);
-      this.logger.debug('[CONVERT] All jobs:', JSON.stringify(nativeRequest.jobs, null, 2));
-
-      // Support both flat structure (from sdk-core driver) and tagged union structure
-      // Flat: { jobType: 'StartWorkflow', workflowType: '...', input: ... }
-      // Tagged: { StartWorkflow: { workflow_type: '...', input: ... } }
-      const startWorkflowJob = nativeRequest.jobs.find(
-        (job: any) => job.jobType === 'StartWorkflow' || job.StartWorkflow
-      );
-      this.logger.debug('[CONVERT] StartWorkflow job:', JSON.stringify(startWorkflowJob, null, 2));
-
-      if (startWorkflowJob) {
-        // Handle flat structure from sdk-core driver
-        if (startWorkflowJob.jobType === 'StartWorkflow') {
-          workflowType =
-            startWorkflowJob.workflowType || startWorkflowJob.workflow_type || 'unknown';
-
-          this.logger.debug(
-            `[CONVERT] Input type: ${typeof startWorkflowJob.input}, value:`,
-            startWorkflowJob.input
-          );
-
-          // Input is already a proper JavaScript value from Rust
-          input = startWorkflowJob.input ?? undefined;
-          this.logger.debug('[CONVERT] Using input as JavaScript value:', input);
-
-          attempt = startWorkflowJob.attempt || 1;
-        }
-        // Handle tagged union structure
-        else if (startWorkflowJob.StartWorkflow) {
-          const startWorkflow = startWorkflowJob.StartWorkflow;
-          workflowType = startWorkflow.workflow_type || 'unknown';
-
-          this.logger.debug(
-            `[CONVERT] Input type: ${typeof startWorkflow.input}, value:`,
-            startWorkflow.input
-          );
-
-          // Input is already a proper JavaScript value from Rust
-          input = startWorkflow.input ?? undefined;
-          this.logger.debug('[CONVERT] Using input as JavaScript value:', input);
-
-          attempt = startWorkflow.attempt || 1;
-        }
-      } else {
-        this.logger.warn('[CONVERT] No StartWorkflow job data found');
-      }
-    } else {
-      this.logger.warn('[CONVERT] No jobs array in native request');
-    }
-
-    const executionId = nativeRequest.run_id || nativeRequest.runId || 'unknown';
-    const workflowId =
-      nativeRequest.execution?.workflow_id || nativeRequest.workflow_id || executionId;
-    const runId = nativeRequest.execution?.run_id || nativeRequest.run_id || executionId;
-
-    // When the engine journaled what this activation hands the workflow. The
-    // jobs carry no times, so the native layer reads them from the journal.
-    const nativeTimes = nativeRequest.journal_times;
-    const journalTimes: JournalTimes | undefined = nativeTimes
-      ? {
-          startedAtMs:
-            typeof nativeTimes.started_at_ms === 'number' ? nativeTimes.started_at_ms : undefined,
-          resolvedAt: nativeTimes.resolved_at ?? {},
-          cancelRequestedAt:
-            typeof nativeTimes.cancel_requested_at === 'number'
-              ? nativeTimes.cancel_requested_at
-              : undefined,
-        }
-      : undefined;
-    // A request to cancel the workflow. It is told at its first wait whose result
-    // the journal did not record before the request, by the journal's times: the
-    // engine adds step results after the journal's own entries, so where a job
-    // sits says nothing about when it happened.
-    const cancelRequested = ((nativeRequest.jobs as any[] | undefined) ?? []).some(
-      (job: any) => job?.CancelWorkflow !== undefined || job?.type === 'CancelWorkflow'
-    );
-    // The n-th event of a name is the n-th journaled under it.
-    const eventTimes = new Map<string, number[]>(
-      Object.entries((nativeTimes?.events ?? {}) as Record<string, number[]>).map(
-        ([name, times]) => [name, [...times]]
-      )
-    );
-
-    // Extract cached step results (for replay)
-    const cachedStepResults: any[] = [];
-    const bufferedEvents: Array<{
-      eventName: string;
-      payload: any;
-      position: number;
-      atMs?: number;
-    }> = [];
-    if (nativeRequest.jobs && Array.isArray(nativeRequest.jobs)) {
-      // Jobs arrive in journal order; the index is what lets a wait with a
-      // timeout tell whether its event or its deadline came first.
-      for (const [position, job] of (nativeRequest.jobs as any[]).entries()) {
-        // Handle HandleEvent jobs (signals delivered via SendEvent)
-        const isHandleEvent = job.type === 'HandleEvent' || job.HandleEvent;
-        if (isHandleEvent) {
-          const evt = job.HandleEvent || job;
-          const eventName = evt.event_name || evt.eventName || '';
-          const payloadData = evt.payload?.data || [];
-          let payload: any = null;
-          if (payloadData.length > 0) {
-            try {
-              const decoded = new TextDecoder().decode(new Uint8Array(payloadData));
-              payload = JSON.parse(decoded);
-            } catch {
-              payload = null;
-            }
-          }
-          if (eventName) {
-            bufferedEvents.push({
-              eventName,
-              payload,
-              position,
-              atMs: eventTimes.get(eventName)?.shift(),
-            });
-          }
-        }
-
-        // Support both flat structure (jobType) and tagged union structure (CompleteStep)
-        const isCompleteStep = job.jobType === 'CompleteStep' || job.CompleteStep;
-        if (isCompleteStep) {
-          const step = job.CompleteStep || job; // Flat structure uses job directly
-          try {
-            let result: any = null;
-            const stepFailure = step.failure;
-            if (stepFailure) {
-              // Terminal task/step failure: inject a sentinel keyed by step name so the
-              // workflow decodes it on replay and throws instead of treating it as success.
-              result = {
-                [TASK_FAILED_SENTINEL_KEY]: true,
-                message: stepFailure.message ?? 'Task failed',
-                error_type:
-                  stepFailure.failure_type ?? stepFailure.errorType ?? stepFailure.error_type ?? '',
-                // How many times the task actually ran, as the engine reports on
-                // the step. Without it the workflow's decode falls back to 1, and a
-                // task that ran three times reports one attempt.
-                attempts: step.execution_attempt ?? step.executionAttempt,
-              };
-            } else {
-              const stepResult = step.result;
-              // Handle both array of bytes and direct result object
-              if (stepResult) {
-                if (Array.isArray(stepResult) && stepResult.length > 0) {
-                  const resultStr = new TextDecoder().decode(new Uint8Array(stepResult));
-                  result = JSON.parse(resultStr);
-                } else if (typeof stepResult === 'object') {
-                  result = stepResult;
-                }
-              }
-            }
-
-            cachedStepResults.push({
-              stepId: step.step_name || step.stepName,
-              stepType: step.step_type || step.stepType || 2,
-              result,
-            });
-          } catch (error) {
-            this.logger.warn(
-              `Failed to parse cached step result for ${step.step_name || step.stepName}:`,
-              error
-            );
-          }
-        }
-
-        // Handle CompleteTask jobs (distributed task results)
-        // Support both flat structure (jobType) and tagged union structure (CompleteTask)
-        const isCompleteTask = job.jobType === 'CompleteTask' || job.CompleteTask;
-        if (isCompleteTask) {
-          const task = job.CompleteTask || job; // Flat structure uses job directly
-          try {
-            let result: any = null;
-            // Handle flat structure result
-            if (task.result) {
-              if (task.result.success !== undefined) {
-                // Flat structure: { success: true, output: ... }
-                result = task.result.output;
-              } else if (task.result?.Success?.output) {
-                // Tagged structure: { Success: { output: { data: [...] } } }
-                const output = task.result.Success.output;
-                if (output.data && Array.isArray(output.data) && output.data.length > 0) {
-                  const resultStr = new TextDecoder().decode(new Uint8Array(output.data));
-                  result = JSON.parse(resultStr);
-                }
-              }
-            }
-
-            cachedStepResults.push({
-              stepId: task.task_id || task.taskId,
-              stepType: 1,
-              result,
-              failed: task.result?.Failed !== undefined || task.result?.success === false,
-              executionAttempt: task.sequence || 1,
-            });
-          } catch (error) {
-            this.logger.warn(
-              `Failed to parse CompleteTask result for ${task.task_id || task.taskId}:`,
-              error
-            );
-          }
-        }
-
-        // Handle ChildWorkflowCompleted jobs (child workflow results). Inject the
-        // child's result under `child:{workflowId}` — the key executeChildWorkflow
-        // checks on replay — mirroring the CompleteTask path above.
-        const isChildCompleted =
-          job.jobType === 'ChildWorkflowCompleted' || job.ChildWorkflowCompleted;
-        if (isChildCompleted) {
-          const child = job.ChildWorkflowCompleted || job;
-          const childId =
-            child.child_workflow_id ||
-            child.childWorkflowId ||
-            child.workflow_id ||
-            child.workflowId;
-          try {
-            let result: any = null;
-            const data = child.result?.data;
-            if (Array.isArray(data) && data.length > 0) {
-              result = JSON.parse(new TextDecoder().decode(new Uint8Array(data)));
-            }
-            cachedStepResults.push({
-              stepId: `child:${childId}`,
-              stepType: 3,
-              result,
-              failed: false,
-              executionAttempt: 1,
-            });
-          } catch (error) {
-            this.logger.warn(
-              `Failed to parse ChildWorkflowCompleted result for ${childId}:`,
-              error
-            );
-          }
-        }
-
-        // Handle ChildWorkflowFailed jobs. Inject a failure sentinel (not a
-        // failed step — the injector skips those); executeChildWorkflow decodes
-        // it on replay and throws ChildWorkflowFailedError, mirroring how a
-        // task failure is surfaced.
-        const isChildFailed = job.jobType === 'ChildWorkflowFailed' || job.ChildWorkflowFailed;
-        if (isChildFailed) {
-          const child = job.ChildWorkflowFailed || job;
-          const childId =
-            child.child_workflow_id ||
-            child.childWorkflowId ||
-            child.workflow_id ||
-            child.workflowId;
-          const failure = child.failure ?? {};
-          const message =
-            (typeof failure === 'object' ? failure.message : undefined) ||
-            child.failure_reason ||
-            (typeof failure === 'string' ? failure : undefined) ||
-            'Child workflow failed';
-          cachedStepResults.push({
-            stepId: `child:${childId}`,
-            stepType: 3,
-            result: { __orcher_child_failed__: true, message },
-            failed: false,
-            executionAttempt: 1,
-          });
-        }
-
-        // A child that ended without a result failed as far as its parent is
-        // concerned: result() throws ChildWorkflowFailedError with the reason.
-        // Without these the parent would wait on the child forever.
-        const childEnded =
-          job.ChildWorkflowCanceled ?? job.ChildWorkflowTerminated ?? job.ChildWorkflowTimedOut;
-        if (childEnded) {
-          const childId = childEnded.workflow_id || childEnded.workflowId;
-          let message: string;
-          if (job.ChildWorkflowCanceled) {
-            message = 'child workflow was canceled';
-          } else if (job.ChildWorkflowTerminated) {
-            message = childEnded.reason
-              ? `child workflow was terminated: ${childEnded.reason}`
-              : 'child workflow was terminated';
-          } else {
-            message = 'child workflow timed out';
-          }
-          cachedStepResults.push({
-            stepId: `child:${childId}`,
-            stepType: 3,
-            result: { __orcher_child_failed__: true, message },
-            failed: false,
-            executionAttempt: 1,
-          });
-        }
-
-        // Handle FireTimer jobs (a durable timer fired). Inject a truthy marker
-        // under `timer:{id}` — the key sleep()/sleepWithId() check on replay —
-        // so the timer call returns instead of re-emitting StartTimer. The
-        // marker carries the job's journal position for waits with a timeout.
-        const isFireTimer = job.jobType === 'FireTimer' || job.FireTimer;
-        if (isFireTimer) {
-          const timer = job.FireTimer || job;
-          const timerId = timer.timer_id || timer.timerId;
-          if (timerId) {
-            cachedStepResults.push({
-              stepId: `timer:${timerId}`,
-              stepType: 1,
-              result: { firedAt: position },
-              failed: false,
-              executionAttempt: 1,
-            });
-          }
-        }
-      }
-    }
-
-    return {
-      executionId,
-      type: workflowType,
-      input,
-      metadata: {
-        workflowId,
-        runId,
-        attempt,
-        namespace: this.options.namespace,
-        taskQueue: this.options.taskQueue,
-      },
-      cachedStepResults,
-      bufferedEvents,
-      journalTimes,
-      cancelRequested,
-    };
-  }
-
-  /**
-   * Convert native task ExecutionRequest format to service ExecutionRequest format
-   *
-   * This bridges the gap between Rust's ExecutionRequest and TypeScript's ExecutionRequest for tasks
-   *
-   * Supports two formats:
-   * 1. Flat structure from sdk-core: { taskType: 'myTask', task_type: 'myTask', input: {...}, ... }
-   * 2. Tagged union structure: { jobs: [{ ExecuteTask: { task_type: '...', ... } }] }
-   */
-  private convertNativeToServiceTaskRequest(nativeRequest: any): ExecutionRequest {
-    // Extract task info
-    let taskType = 'unknown';
-    let input: any = [];
-    let attempt = 1;
-    let timeout: number | undefined;
-
-    // First, try flat structure from sdk-core driver (direct fields on the request)
-    // sdk-core sends: { taskType, task_type, type, taskId, input, attempt, ... }
-    if (nativeRequest.taskType || nativeRequest.task_type || nativeRequest.type) {
-      taskType =
-        nativeRequest.taskType || nativeRequest.task_type || nativeRequest.type || 'unknown';
-      input = nativeRequest.input !== undefined ? nativeRequest.input : [];
-      attempt = nativeRequest.attempt || 1;
-
-      // Extract timeout if present
-      if (nativeRequest.timeout) {
-        const timeoutSecs = nativeRequest.timeout.secs || nativeRequest.timeout;
-        const timeoutNanos = nativeRequest.timeout.nanos || 0;
-        timeout =
-          typeof timeoutSecs === 'number'
-            ? timeoutSecs * 1000 + Math.floor(timeoutNanos / 1000000)
-            : undefined;
-      }
-    }
-    // Fall back to jobs array (tagged union structure)
-    else if (nativeRequest.jobs && Array.isArray(nativeRequest.jobs)) {
-      const executeTaskJob = nativeRequest.jobs.find(
-        (job: any) => job.ExecuteTask || job.ScheduleTask
-      );
-
-      if (executeTaskJob) {
-        const taskJob = executeTaskJob.ExecuteTask || executeTaskJob.ScheduleTask;
-        taskType = taskJob.task_type || 'unknown';
-        input = taskJob.input !== undefined ? taskJob.input : [];
-        attempt = taskJob.attempt || 1;
-
-        // Extract timeout if present
-        if (taskJob.timeout) {
-          const timeoutSecs = taskJob.timeout.secs || 0;
-          const timeoutNanos = taskJob.timeout.nanos || 0;
-          timeout = timeoutSecs * 1000 + Math.floor(timeoutNanos / 1000000);
-        }
-      }
-    }
-
-    // The native worker hands a task over as `task_id`, `workflow_id` and
-    // `execution_id`, the last being the id of the workflow run that scheduled
-    // the task (see the task JSON built in native/src/worker.rs). The task id
-    // becomes the request's `executionId`, which `ctx.taskId()` returns.
-    const executionId = nativeRequest.task_id || nativeRequest.executionId || 'unknown';
-    const workflowId =
-      nativeRequest.workflow_id ||
-      nativeRequest.execution?.workflow_id ||
-      nativeRequest.workflowId ||
-      'unknown';
-    const runId =
-      nativeRequest.execution_id ||
-      nativeRequest.execution?.run_id ||
-      nativeRequest.run_id ||
-      nativeRequest.runId ||
-      'unknown';
-
-    return {
-      executionId,
-      type: taskType,
-      input,
-      metadata: {
-        workflowId,
-        runId,
-        attempt,
-        namespace: this.options.namespace,
-        taskQueue: this.options.taskQueue,
-        timeout,
-        // The heartbeat interval the engine will judge this task by. Carried so
-        // the handler can pace itself; `ctx.heartbeatTimeout()` reads it.
-        heartbeatTimeoutMs:
-          typeof nativeRequest.heartbeat_timeout_ms === 'number'
-            ? nativeRequest.heartbeat_timeout_ms
-            : undefined,
-      },
-      cachedStepResults: [],
-    };
-  }
-
-  /**
    * Run the shutdown sequence described on {@link Worker.shutdown}.
    */
   private async performShutdown(options?: ShutdownOptions): Promise<void> {
     const force = options?.force ?? false;
-    const timeout = durationToMillis(options?.timeout ?? this.options.shutdownGraceTime ?? 30000);
+    if (options?.timeout !== undefined || force) {
+      this.logger.warn(
+        'ShutdownOptions.timeout and force have no effect: running work gets the ' +
+          'shutdownGraceTime the worker was created with.'
+      );
+    }
 
-    this.logger.info(`Shutting down service (force=${force}, timeout=${timeout}ms)...`);
+    this.logger.info('Shutting down service...');
     this.state = force ? WorkerState.FORCE_SHUTDOWN : WorkerState.SHUTTING_DOWN;
 
     try {
-      // Tell the workflow and task drivers first, so they start no new polls.
-      // They still hand over what the polls they already had out bring back,
-      // which is why the workflow and task polling loops keep running below.
-      if (this.nativeService) {
-        getNativeModule().serviceRequestShutdown?.(this.nativeService);
+      // Drains: the host stops claiming, gives running work its grace, hands
+      // back the activations still unanswered, and deregisters. Every pull
+      // then resolves null, which ends the pull loops.
+      const host = this.host;
+      if (host) {
+        await getNativeModule().hostShutdown(host);
+        await this.settleWithin(this.pullLoops, PULL_LOOP_STOP_TIMEOUT_MS);
       }
-
-      // Signal the actor polling loops to stop
-      this.pullModelShutdown = true;
-
-      if (force) {
-        this.driverPollingStopped = true;
-      } else {
-        await this.waitForInFlightExecutions(timeout);
-      }
-
-      // Shutdown native service (stops sdk-core drivers). This returns once
-      // the workflow and task drivers have stopped, having run whatever they
-      // handed over meanwhile; only then do those polling loops stop.
-      let slotsClosed = false;
-      if (this.nativeService) {
-        const nativeModule = getNativeModule();
-        if (nativeModule.serviceShutdown) {
-          this.logger.debug('Shutting down native service...');
-          await nativeModule.serviceShutdown(this.nativeService);
-          slotsClosed = true;
-        }
-        this.nativeService = null;
-      }
-      this.driverPollingStopped = true;
-      if (slotsClosed) {
-        // They see their channels closed at once. Bounded all the same, so a
-        // poll that never answers cannot hold shutdown up.
-        await this.settleWithin(this.driverPollingLoops, DRIVER_POLLER_STOP_TIMEOUT_MS);
-      }
-      this.driverPollingLoops = [];
+      this.host = null;
+      this.pullLoops = [];
 
       // Dispose DI container (cleanup resources, call lifecycle hooks). After
-      // the native shutdown, since workflow activations run until then and
+      // the host has stopped, since workflow activations run until then and
       // their queries and updates resolve handlers from it.
       this.logger.debug('Disposing DI container...');
       await this.container.dispose();
-
-      if (this.pollerServiceHandles.length > 0) {
-        this.logger.debug(
-          `Cleaning up ${this.pollerServiceHandles.length} per-poller service handles...`
-        );
-        // The native module has no explicit close; dropping the handles lets them
-        // be garbage collected.
-        this.pollerServiceHandles = [];
-        this.logger.debug('Per-poller service handles cleaned up');
-      }
 
       // Close client connection
       if (this.client) {
@@ -2628,7 +1362,6 @@ export class Worker {
       this.emit('error', error);
       throw error;
     } finally {
-      this.driverPollingStopped = true;
       this.shutdownPromise = null;
     }
   }
@@ -2647,34 +1380,6 @@ export class Worker {
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  /**
-   * Wait for in-flight executions to complete
-   */
-  private async waitForInFlightExecutions(timeout: number): Promise<void> {
-    const startTime = Date.now();
-    const checkInterval = 100;
-
-    this.logger.info(
-      `Waiting for ${this.stats.workflowsInProgress + this.stats.tasksInProgress} in-flight executions...`
-    );
-
-    while (this.stats.workflowsInProgress > 0 || this.stats.tasksInProgress > 0) {
-      const elapsed = Date.now() - startTime;
-
-      if (elapsed >= timeout) {
-        this.logger.warn(
-          `Shutdown timeout reached with ${this.stats.workflowsInProgress + this.stats.tasksInProgress} executions still in progress`
-        );
-        break;
-      }
-
-      await this.sleep(checkInterval);
-    }
-
-    const elapsed = Date.now() - startTime;
-    this.logger.info(`All in-flight executions completed in ${elapsed}ms`);
   }
 
   /**
@@ -2733,13 +1438,6 @@ export class Worker {
       return 0;
     }
     return Math.min(100, (totalCpu / totalTime) * 100);
-  }
-
-  /**
-   * Sleep helper
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

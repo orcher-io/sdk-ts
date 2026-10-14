@@ -7,21 +7,26 @@
 import { Duration } from '../../workflow/types';
 import { ChildWorkflowFailedError } from '../../workflow/child-handle';
 import { isWorkflowSuspension } from '../../errors';
-import { FakeEngine, bytes, runToCompletion, runner, type ChildOutcome } from './support/fake-engine';
+import {
+  FakeEngine,
+  bytes,
+  runToCompletion,
+  runner,
+  type ChildOutcome,
+} from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
 describe('child workflow handle', () => {
-  const sendersOf = (engine: FakeEngine, kind: string) =>
-    engine.sent.filter((c) => kind in c).map((c) => c[kind]);
+  const sentOf = (engine: FakeEngine, kind: string) =>
+    engine.sent
+      .map((c) => c.what as Record<string, any>)
+      .filter((what) => what.oneofKind === kind)
+      .map((what) => what[kind]);
 
   it('sends an event to the child once, however often the parent replays', async () => {
     const activate = runner(async (ctx) => {
@@ -36,13 +41,14 @@ describe('child workflow handle', () => {
     const { output } = await runToCompletion(activate, engine);
 
     expect(output).toBe('sent');
-    expect(sendersOf(engine, 'SendEvent')).toEqual([
+    // Any run of the child receives it.
+    expect(sentOf(engine, 'sendEvent')).toEqual([
       {
-        workflow_id: 'child_0',
-        run_id: null,
-        event_name: 'go',
+        workflowId: 'child_0',
+        runId: '',
+        name: 'go',
         payload: { data: bytes('now'), metadata: {} },
-        headers: [],
+        headers: {},
       },
     ]);
   });
@@ -59,14 +65,13 @@ describe('child workflow handle', () => {
 
     await runToCompletion(activate, engine);
 
-    expect(sendersOf(engine, 'CancelChildWorkflow')).toEqual([
-      { workflow_id: 'child_0', run_id: '' },
-    ]);
+    expect(sentOf(engine, 'cancelChild')).toEqual([{ stepId: 'child_0' }]);
   });
 
   it.each([
     ['canceled', { kind: 'canceled' } as ChildOutcome, /canceled/],
-    ['terminated', { kind: 'terminated', reason: 'by hand' } as ChildOutcome, /terminated: by hand/],
+    // The kernel does not carry the reason a child was terminated for.
+    ['terminated', { kind: 'terminated', reason: 'by hand' } as ChildOutcome, /terminated/],
     ['timed out', { kind: 'timed_out' } as ChildOutcome, /timed out/],
   ])('fails the result of a child that was %s', async (_label, outcome, message) => {
     const activate = runner(async (ctx) => {

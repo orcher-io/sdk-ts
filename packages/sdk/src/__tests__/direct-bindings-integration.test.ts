@@ -23,7 +23,7 @@ import { ExecutionRequest, ExecutionResult } from '../types';
 function directBindingsAvailable(): boolean {
   try {
     const { getNativeModule } = require('../core/native');
-    return typeof getNativeModule().serviceCreate === 'function';
+    return typeof getNativeModule().hostStart === 'function';
   } catch {
     return false;
   }

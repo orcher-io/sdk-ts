@@ -7,13 +7,9 @@ import { Duration } from '../../workflow/types';
 import { WorkflowTime } from '../../workflow/time';
 import { FakeEngine, completion, runToCompletion, runner, taskRef } from './support/fake-engine';
 
+// A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
-  getNativeModule: jest.fn(() => ({
-    serviceCreate: jest.fn(() => ({})),
-    serviceStart: jest.fn(async () => undefined),
-    pollWorkflowTask: jest.fn(() => new Promise(() => {})),
-    pollTask: jest.fn(() => new Promise(() => {})),
-  })),
+  getNativeModule: jest.fn(() => ({})),
   isNativeAvailable: jest.fn(() => true),
 }));
 
