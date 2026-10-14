@@ -1,6 +1,6 @@
 {
   "name": "@orcher/sdk-darwin-arm64",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "The @orcher/sdk native binding for macOS on Apple silicon",
   "license": "Apache-2.0",
   "author": "ORCHER Contributors",

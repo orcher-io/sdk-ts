@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.7](https://github.com/orcher-io/sdk-ts/compare/v0.5.6...v0.5.7) (2026-10-14)
+
+
+### Features
+
+* run the worker on the shared worker host ([#39](https://github.com/orcher-io/sdk-ts/issues/39)) ([9e7ce19](https://github.com/orcher-io/sdk-ts/commit/9e7ce193c1dc8205974a814235ce12f1095ac156))
+* run workflow activations from the kernel protocol ([#37](https://github.com/orcher-io/sdk-ts/issues/37)) ([398b66d](https://github.com/orcher-io/sdk-ts/commit/398b66dc29398c0103d271e3569a3a2602849846))
+
 ## [0.5.6](https://github.com/orcher-io/sdk-ts/compare/v0.5.5...v0.5.6) (2026-10-11)
 
 
