@@ -71,6 +71,21 @@ export enum WorkflowCommandType {
 }
 
 /**
+ * The kind of a step the code reached: a task (sessions included), a timer
+ * (an event wait's deadline included) or a child workflow.
+ */
+export type StepKind = 'task' | 'timer' | 'child';
+
+/**
+ * A step the code reached, by its id: a task's id, a timer's id or a child's
+ * workflow id.
+ */
+export interface ReachedStep {
+  id: string;
+  kind: StepKind;
+}
+
+/**
  * Fields shared by every workflow command.
  */
 export interface WorkflowCommand {
@@ -563,7 +578,7 @@ export class WorkflowContext {
     // already completed.
     const sequence = this.nextSequence();
     const taskId = `${taskName}_${sequence}`;
-    this.reachStep(taskId);
+    this.reachStep(taskId, 'task');
     this.cancellationFor(taskId);
 
     // A journaled result means the task already ran: return it instead of
@@ -694,7 +709,7 @@ export class WorkflowContext {
     const sequence = this.nextSequence();
     const sessionId = `session_${sequence}`;
     const taskId = `${SESSION_CREATE_TASK}_${sequence}`;
-    this.reachStep(taskId);
+    this.reachStep(taskId, 'task');
     this.cancellationFor(taskId);
 
     // On replay, the journaled session creation result is a serialized SessionInfo.
@@ -910,7 +925,7 @@ export class WorkflowContext {
    * this check, so IDs stay in lockstep across replays.
    */
   private emitTimer(timerId: string, sequence: number, durationMs: number): void {
-    this.reachStep(timerId);
+    this.reachStep(timerId, 'timer');
     this.cancellationFor(`timer:${timerId}`);
     if (this.state.pendingTaskResults.has(`timer:${timerId}`)) {
       this.observe(`timer:${timerId}`);
@@ -988,7 +1003,7 @@ export class WorkflowContext {
     // consumed so ordering stays stable.
     const sequence = this.nextSequence();
     const workflowId = options?.workflowId || `child_${sequence}`;
-    this.reachStep(workflowId);
+    this.reachStep(workflowId, 'child');
 
     // Emit StartChildWorkflow unless the child has already completed, in which
     // case its outcome is cached under `child:{id}`.
@@ -1094,7 +1109,7 @@ export class WorkflowContext {
     // it (informational only) so it does not consume values from ctx.random.
     const sequence = this.nextSequence();
     const workflowId = options?.workflowId || `child_${sequence}`;
-    this.reachStep(workflowId);
+    this.reachStep(workflowId, 'child');
     const runId = `run_${workflowId}`;
 
     // Emit StartChildWorkflow unless the child has already completed. This does
@@ -1576,7 +1591,7 @@ export class WorkflowContext {
     const timerId = this.eventTimeoutTimerId(eventName);
     // Reached on every path, whichever of the event and the deadline wins:
     // the journal holds this timer whenever an earlier activation parked here.
-    this.reachStep(timerId);
+    this.reachStep(timerId, 'timer');
     const fired = this.state.pendingTaskResults.get(`timer:${timerId}`);
     const timerFired = this.state.pendingTaskResults.has(`timer:${timerId}`);
     // This wait's result is the event or the deadline, whichever the journal
@@ -1776,8 +1791,8 @@ export class WorkflowContext {
     this.state.commands.push(command);
   }
 
-  /** The id of every step the code reached this activation, in order. */
-  private readonly reachedSteps: string[] = [];
+  /** Every step the code reached this activation, in order. */
+  private readonly reachedSteps: ReachedStep[] = [];
 
   /**
    * Record that the code reached the step with this id: a task, a timer or a
@@ -1788,8 +1803,8 @@ export class WorkflowContext {
    *
    * @internal
    */
-  reachStep(stepId: string): void {
-    this.reachedSteps.push(stepId);
+  reachStep(stepId: string, kind: StepKind): void {
+    this.reachedSteps.push({ id: stepId, kind });
   }
 
   /**
@@ -1802,6 +1817,17 @@ export class WorkflowContext {
    * @internal Used by the executor
    */
   takeReachedSteps(): string[] {
+    return this.takeReached().map((step) => step.id);
+  }
+
+  /**
+   * The steps the code reached this activation, with their kinds, as
+   * `takeReachedSteps` gives their ids. The kernel protocol sends each one as
+   * a call of its kind.
+   *
+   * @internal Used by the executor
+   */
+  takeReached(): ReachedStep[] {
     return this.reachedSteps.splice(0);
   }
 

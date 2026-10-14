@@ -48,6 +48,17 @@ import {
   type TaskDefinition,
 } from './types';
 import { WorkflowExecutor } from './workflow-executor';
+import {
+  answerActivation,
+  loadActivation,
+  protocolError,
+  type AskedQuery,
+  type AskedUpdate,
+  type HandlerQueryResponse,
+  type HandlerUpdateResponse,
+  type LoadedActivation,
+} from './activation';
+import type { RunActivation, RunActivationResult } from '../core/generated/kernel';
 
 /**
  * How long shutdown waits for the workflow and task polling loops to end once
@@ -1771,6 +1782,70 @@ export class Worker {
   }
 
   /**
+   * Run one workflow activation as the kernel protocol carries it, and answer it.
+   *
+   * The activation's resolutions are loaded into a fresh context, the workflow's
+   * code runs in it as it does for `executeWorkflowDirectBindings`, and the
+   * answer carries every durable call the code made, in issue order, those
+   * answered from history marked satisfied. A workflow that fails answers
+   * `workflowFailed`; an activation this SDK cannot process, or a command the
+   * protocol cannot carry, answers `protocolError`.
+   *
+   * The worker does not use this yet: it still runs activations from the jobs
+   * sdk-core derives from the journal.
+   *
+   * @internal
+   */
+  async runActivation(activation: RunActivation): Promise<RunActivationResult> {
+    const activationId = activation.activationId;
+    let loaded: LoadedActivation;
+    try {
+      loaded = loadActivation(activation, this.options.namespace);
+    } catch (error) {
+      return protocolError(activationId, error instanceof Error ? error.message : String(error));
+    }
+
+    const workflowDef = this.workflowMap.get(loaded.workflowType);
+    if (!workflowDef) {
+      this.logger.error(`[KERNEL] Workflow not registered: ${loaded.workflowType}`);
+      return answerActivation(
+        activationId,
+        { success: false, error: { message: `Workflow not registered: ${loaded.workflowType}` } },
+        [],
+        []
+      );
+    }
+
+    await this.workflowSemaphore.acquire();
+    this.stats.workflowsInProgress++;
+    try {
+      const result = await this.workflowExecutor.executeIn(workflowDef, loaded.context, {
+        executionId: loaded.executionId,
+        type: loaded.workflowType,
+        input: loaded.input,
+        metadata: {
+          workflowId: loaded.context.workflowId(),
+          runId: loaded.context.runId(),
+          attempt: loaded.context.attempt(),
+          namespace: loaded.context.namespace(),
+          taskQueue: loaded.context.taskQueue(),
+        },
+      });
+      this.stats.workflowsExecuted++;
+      const queries = this.answerQueries(loaded.queries, result.context);
+      const updates = await this.answerUpdates(loaded.updates, result.context);
+      return answerActivation(activationId, result, queries, updates);
+    } catch (error) {
+      this.stats.errors++;
+      this.logger.error('[KERNEL] Workflow activation error:', error);
+      return protocolError(activationId, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.stats.workflowsInProgress--;
+      this.workflowSemaphore.release();
+    }
+  }
+
+  /**
    * How a task's heartbeats reach the native worker, which heartbeats every
    * task on its own. Undefined when the native module does not provide task
    * heartbeats.
@@ -1883,18 +1958,29 @@ export class Worker {
    * in the bridge format expected by Rust.
    */
   private processQueryJobs(nativeRequest: any, context: any): any[] {
-    const queryResponses: any[] = [];
     if (!nativeRequest.jobs || !Array.isArray(nativeRequest.jobs)) {
-      return queryResponses;
+      return [];
     }
-
+    const asked: AskedQuery[] = [];
     for (const job of nativeRequest.jobs) {
       const queryJob = job.ProcessQuery || (job.jobType === 'ProcessQuery' ? job : null);
       if (!queryJob) continue;
+      asked.push({
+        queryId: queryJob.query_id || queryJob.queryId || '',
+        queryType: queryJob.query_type || queryJob.queryType || '',
+      });
+    }
+    return this.answerQueries(asked, context);
+  }
 
-      const queryId = queryJob.query_id || queryJob.queryId || '';
-      const queryType = queryJob.query_type || queryJob.queryType || '';
-
+  /**
+   * Answer each query from its registered handler (via GlobalRegistry @Query()
+   * decorator or WorkflowContext manual registration), in the bridge format
+   * expected by Rust.
+   */
+  private answerQueries(asked: AskedQuery[], context: any): HandlerQueryResponse[] {
+    const queryResponses: HandlerQueryResponse[] = [];
+    for (const { queryId, queryType } of asked) {
       try {
         let result: any;
 
@@ -1948,24 +2034,39 @@ export class Worker {
    * decorator) and returns update responses in the bridge format expected by Rust.
    */
   private async processUpdateJobs(nativeRequest: any, context: any): Promise<any[]> {
-    const updateResults: any[] = [];
     if (!nativeRequest.jobs || !Array.isArray(nativeRequest.jobs)) {
-      return updateResults;
+      return [];
     }
-
+    const asked: AskedUpdate[] = [];
     for (const job of nativeRequest.jobs) {
       const updateJob = job.UpdateState || (job.jobType === 'UpdateState' ? job : null);
       if (!updateJob) continue;
+      const data: number[] | undefined = updateJob.payload?.data;
+      asked.push({
+        updateId: updateJob.update_id || updateJob.updateId || '',
+        // sdk-core names the update `update_name`.
+        updateType:
+          updateJob.update_name ||
+          updateJob.updateName ||
+          updateJob.update_type ||
+          updateJob.updateType ||
+          '',
+        args: Array.isArray(data) ? Uint8Array.from(data) : undefined,
+      });
+    }
+    return this.answerUpdates(asked, context);
+  }
 
-      const updateId = updateJob.update_id || updateJob.updateId || '';
-      // sdk-core names the update `update_name`.
-      const updateType =
-        updateJob.update_name ||
-        updateJob.updateName ||
-        updateJob.update_type ||
-        updateJob.updateType ||
-        '';
-
+  /**
+   * Apply each update with its registered handler (via GlobalRegistry
+   * @Update() decorator), answering in the bridge format expected by Rust.
+   */
+  private async answerUpdates(
+    asked: AskedUpdate[],
+    context: any
+  ): Promise<HandlerUpdateResponse[]> {
+    const updateResults: HandlerUpdateResponse[] = [];
+    for (const { updateId, updateType, args } of asked) {
       try {
         const updateMeta = diGlobalRegistry.getUpdate(updateType);
         if (!updateMeta) {
@@ -1979,11 +2080,8 @@ export class Worker {
         // A handler takes the activation's context and the client's argument,
         // as `@Update` documents; the argument arrives as its JSON encoding.
         const instance = this.container.resolve(updateMeta.handlerClass);
-        const data: number[] | undefined = updateJob.payload?.data;
         const input =
-          Array.isArray(data) && data.length > 0
-            ? JSON.parse(new TextDecoder().decode(new Uint8Array(data)))
-            : undefined;
+          args && args.length > 0 ? JSON.parse(new TextDecoder().decode(args)) : undefined;
         const result = await instance[updateMeta.methodName](context, input);
 
         // Serialize result to Payload format for Rust bridge

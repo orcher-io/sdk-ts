@@ -153,14 +153,29 @@ export class WorkflowExecutor {
     workflowDef: WorkflowDefinition,
     request: ExecutionRequest
   ): Promise<ExecutionResult> {
+    // Created outside the run so a suspended workflow's commands can be read from it.
+    this.logger.info(`[WF-EXEC] Creating context for ${request.executionId}`);
+    const context = this.createContext(request);
+    return this.executeIn(workflowDef, context, request);
+  }
+
+  /**
+   * Execute one activation of a workflow in a context already loaded with what
+   * the run's history holds for it.
+   *
+   * `request` names the activation (`executionId`, `type`) and carries the
+   * workflow's input and timeout; its replay state is not read, the context
+   * already holds it. Like `execute`, failures are returned, not thrown.
+   */
+  async executeIn(
+    workflowDef: WorkflowDefinition,
+    context: WorkflowContext,
+    request: Pick<ExecutionRequest, 'executionId' | 'type' | 'input' | 'metadata'>
+  ): Promise<ExecutionResult> {
     const startTime = Date.now();
     this.stats.totalExecutions++;
 
     this.logger.info(`[WF-EXEC] Starting execution: ${request.type} (${request.executionId})`);
-
-    // Created outside the try block so the catch can read the commands of a suspended workflow.
-    this.logger.info(`[WF-EXEC] Creating context for ${request.executionId}`);
-    const context = this.createContext(request);
 
     this.logger.info(`[WF-EXEC] Deserializing input for ${request.executionId}`);
     const args = this.deserializeInput(request.input);
@@ -204,7 +219,8 @@ export class WorkflowExecutor {
       // including those of closures the workflow started and did not await.
       await context.closuresSettled();
       const stepCommands = context.takeCommands();
-      const reachedSteps = context.takeReachedSteps();
+      const reached = context.takeReached();
+      const reachedSteps = reached.map((step) => step.id);
       this.logger.info(
         `[WF-EXEC] Extracted ${stepCommands.length} step commands from context for ${request.executionId}`
       );
@@ -275,6 +291,7 @@ export class WorkflowExecutor {
         duration,
         commands: stepCommands, // Step commands plus the terminal command
         reachedSteps,
+        reached,
         context, // Exposed for query and update handler dispatch
       };
 
@@ -308,7 +325,8 @@ export class WorkflowExecutor {
         );
         await context.closuresSettled();
         const stepCommands = context.takeCommands();
-        const reachedSteps = context.takeReachedSteps();
+        const reached = context.takeReached();
+        const reachedSteps = reached.map((step) => step.id);
         const maxSequence =
           stepCommands.length > 0 ? Math.max(...stepCommands.map((cmd) => cmd.sequence || 0)) : -1;
         stepCommands.push({
@@ -321,6 +339,7 @@ export class WorkflowExecutor {
           duration,
           commands: stepCommands,
           reachedSteps,
+          reached,
           context,
         } as any;
       }
@@ -344,7 +363,8 @@ export class WorkflowExecutor {
         // its result is reported with this activation and it does not run again.
         await context.closuresSettled();
         const stepCommands = context.takeCommands();
-        const reachedSteps = context.takeReachedSteps();
+        const reached = context.takeReached();
+        const reachedSteps = reached.map((step) => step.id);
         this.logger.info(
           `[WF-EXEC] Extracted ${stepCommands.length} commands for suspended workflow ${request.executionId}`
         );
@@ -371,6 +391,7 @@ export class WorkflowExecutor {
           duration,
           commands: stepCommands,
           reachedSteps,
+          reached,
           suspended: true,
           context, // Exposed for query and update handler dispatch
         };
@@ -395,12 +416,14 @@ export class WorkflowExecutor {
       this.logger.info(
         `[WF-EXEC] About to return failure ExecutionResult for ${request.executionId}`
       );
+      const failedReached = context.takeReached();
       const failureResult = {
         executionId: request.executionId,
         success: false,
         error: this.serializeError(error, request),
         duration,
-        reachedSteps: context.takeReachedSteps(),
+        reachedSteps: failedReached.map((step) => step.id),
+        reached: failedReached,
         context, // Exposed for query and update handler dispatch
       };
 
@@ -629,7 +652,7 @@ export class WorkflowExecutor {
   /**
    * Serialize error
    */
-  private serializeError(error: unknown, _request: ExecutionRequest): any {
+  private serializeError(error: unknown, _request: Pick<ExecutionRequest, 'executionId'>): any {
     const errorObj = {
       message: error instanceof Error ? error.message : String(error),
       // Non-determinism is reported as the kind the core recognises, so it
