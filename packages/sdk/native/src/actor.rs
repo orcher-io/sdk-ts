@@ -625,8 +625,7 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
             "error_message": response.error_message,
         });
 
-        Ok(serde_json::to_string(&result)
-            .map_err(|e| format!("Failed to serialize response: {}", e))?)
+        serde_json::to_string(&result).map_err(|e| format!("Failed to serialize response: {}", e))
     })
 }
 
