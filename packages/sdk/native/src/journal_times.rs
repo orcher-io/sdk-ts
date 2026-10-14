@@ -112,7 +112,10 @@ mod tests {
                 WorkflowExecutionCancelRequestedEventAttributes::default(),
             ),
         )];
-        assert_eq!(JournalTimes::read(&journal).cancel_requested_at, Some(2_000));
+        assert_eq!(
+            JournalTimes::read(&journal).cancel_requested_at,
+            Some(2_000)
+        );
         assert_eq!(JournalTimes::read(&[]).cancel_requested_at, None);
     }
 
