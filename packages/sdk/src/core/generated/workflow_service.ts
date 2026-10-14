@@ -485,6 +485,14 @@ export interface CancelWorkflowRequest {
      * @generated from protobuf field: string request_id = 5
      */
     requestId: string;
+    /**
+     * Optional: How long the workflow may spend cleaning up after it observes
+     * the cancellation. Once it has passed, the workflow is terminated. Unset
+     * means no limit; terminating the workflow stops it at any time.
+     *
+     * @generated from protobuf field: google.protobuf.Duration cleanup_timeout = 6
+     */
+    cleanupTimeout?: Duration;
 }
 /**
  * CancelWorkflowResponse confirms the cancellation request.
@@ -1940,7 +1948,8 @@ class CancelWorkflowRequest$Type extends MessageType<CancelWorkflowRequest> {
             { no: 2, name: "execution_id", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 3, name: "namespace", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 4, name: "reason", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
-            { no: 5, name: "request_id", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+            { no: 5, name: "request_id", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 6, name: "cleanup_timeout", kind: "message", T: () => Duration }
         ]);
     }
     override create(value?: PartialMessage<CancelWorkflowRequest>): CancelWorkflowRequest {
@@ -1974,6 +1983,9 @@ class CancelWorkflowRequest$Type extends MessageType<CancelWorkflowRequest> {
                 case /* string request_id */ 5:
                     message.requestId = reader.string();
                     break;
+                case /* google.protobuf.Duration cleanup_timeout */ 6:
+                    message.cleanupTimeout = Duration.internalBinaryRead(reader, reader.uint32(), options, message.cleanupTimeout);
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -2001,6 +2013,9 @@ class CancelWorkflowRequest$Type extends MessageType<CancelWorkflowRequest> {
         /* string request_id = 5; */
         if (message.requestId !== "")
             writer.tag(5, WireType.LengthDelimited).string(message.requestId);
+        /* google.protobuf.Duration cleanup_timeout = 6; */
+        if (message.cleanupTimeout)
+            Duration.internalBinaryWrite(message.cleanupTimeout, writer.tag(6, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

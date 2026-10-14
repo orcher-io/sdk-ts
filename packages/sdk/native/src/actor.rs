@@ -22,7 +22,7 @@ use crate::client::ClientHandleType;
 use crate::runtime::Runtime;
 use crate::worker::WorkerHandleType;
 
-use orcher_proto::orcher::v1::{
+use orcher_sdk_core::proto::orcher::v1::{
     ActorHandler, DeleteStateRequest, GetStateRequest, ListStateKeysRequest, OperationMode,
     RegisterHandlersRequest, SetStateRequest,
 };
@@ -599,7 +599,7 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
 
         let max = orcher_sdk_core::limits::default_max_message_bytes();
         let mut client =
-            orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
+            orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
                 .max_decoding_message_size(max)
                 .max_encoding_message_size(max);
 
@@ -635,10 +635,10 @@ pub fn register_actor_handlers(mut cx: FunctionContext) -> JsResult<JsPromise> {
 /// Return the worker's cached actor-state client, connecting on first use.
 async fn get_actor_client(
     holder: &tokio::sync::Mutex<
-        Option<orcher_proto::orcher::v1::actor_service_client::ActorServiceClient<Channel>>,
+        Option<orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient<Channel>>,
     >,
     server_url: &str,
-) -> Result<orcher_proto::orcher::v1::actor_service_client::ActorServiceClient<Channel>, String> {
+) -> Result<orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient<Channel>, String> {
     let mut guard = holder.lock().await;
     if let Some(client) = guard.as_ref() {
         return Ok(client.clone());
@@ -650,7 +650,7 @@ async fn get_actor_client(
         .map_err(|e| format!("Failed to connect actor client: {}", e))?;
     // Actor state up to the configured message limit, not tonic's 4 MiB.
     let max = orcher_sdk_core::limits::default_max_message_bytes();
-    let client = orcher_proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
+    let client = orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient::new(channel)
         .max_decoding_message_size(max)
         .max_encoding_message_size(max);
     *guard = Some(client.clone());

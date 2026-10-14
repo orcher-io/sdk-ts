@@ -50,7 +50,7 @@ use crate::types::{
     get_optional_number_property, get_optional_string_property, get_string_property,
 };
 
-use orcher_proto::orcher::v1::actor_service_client::ActorServiceClient;
+use orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient;
 use orcher_sdk_core::bridge::{task_to_execution_request, ExecutionResult};
 use orcher_sdk_core::poller::{
     ActorDriver, ActorDriverConfig, ActorDriverEvent, ActorWorkResult, SessionQueueChange,

@@ -252,6 +252,16 @@ export interface CompleteWorkflowExecutionRequest {
      * @generated from protobuf field: orcher.v1.TaskCapabilities eager_task_capabilities = 12
      */
     eagerTaskCapabilities?: TaskCapabilities;
+    /**
+     * The worker protocol version of the worker completing this step, numbered
+     * as in WorkerCapabilities.protocol_version. 0 (unset) is every worker from
+     * before this field. When the step carried a cancellation request and the
+     * worker is below version 1, it did not hand the request to the workflow:
+     * the engine then ignores the commands and ends the run as cancelled.
+     *
+     * @generated from protobuf field: uint32 protocol_version = 13
+     */
+    protocolVersion: number;
 }
 /**
  * CompleteWorkflowExecutionResponse acknowledges completion and may hand back
@@ -317,6 +327,13 @@ export interface FailWorkflowExecutionRequest {
      * @generated from protobuf field: bytes binary_checksum = 7
      */
     binaryChecksum: Uint8Array;
+    /**
+     * The worker protocol version, as in
+     * CompleteWorkflowExecutionRequest.protocol_version.
+     *
+     * @generated from protobuf field: uint32 protocol_version = 8
+     */
+    protocolVersion: number;
 }
 /**
  * FailWorkflowExecutionResponse acknowledges failure.
@@ -1276,7 +1293,8 @@ class CompleteWorkflowExecutionRequest$Type extends MessageType<CompleteWorkflow
             { no: 9, name: "binary_checksum", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
             { no: 10, name: "stream_entry_id", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 11, name: "update_results", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => UpdateResult },
-            { no: 12, name: "eager_task_capabilities", kind: "message", T: () => TaskCapabilities }
+            { no: 12, name: "eager_task_capabilities", kind: "message", T: () => TaskCapabilities },
+            { no: 13, name: "protocol_version", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
         ]);
     }
     override create(value?: PartialMessage<CompleteWorkflowExecutionRequest>): CompleteWorkflowExecutionRequest {
@@ -1292,6 +1310,7 @@ class CompleteWorkflowExecutionRequest$Type extends MessageType<CompleteWorkflow
         message.binaryChecksum = new Uint8Array(0);
         message.streamEntryId = "";
         message.updateResults = [];
+        message.protocolVersion = 0;
         if (value !== undefined)
             reflectionMergePartial<CompleteWorkflowExecutionRequest>(this, message, value!);
         return message;
@@ -1336,6 +1355,9 @@ class CompleteWorkflowExecutionRequest$Type extends MessageType<CompleteWorkflow
                     break;
                 case /* orcher.v1.TaskCapabilities eager_task_capabilities */ 12:
                     message.eagerTaskCapabilities = TaskCapabilities.internalBinaryRead(reader, reader.uint32(), options, message.eagerTaskCapabilities);
+                    break;
+                case /* uint32 protocol_version */ 13:
+                    message.protocolVersion = reader.uint32();
                     break;
                 default:
                     let u = options.readUnknownField;
@@ -1385,6 +1407,9 @@ class CompleteWorkflowExecutionRequest$Type extends MessageType<CompleteWorkflow
         /* orcher.v1.TaskCapabilities eager_task_capabilities = 12; */
         if (message.eagerTaskCapabilities)
             TaskCapabilities.internalBinaryWrite(message.eagerTaskCapabilities, writer.tag(12, WireType.LengthDelimited).fork(), options).join();
+        /* uint32 protocol_version = 13; */
+        if (message.protocolVersion !== 0)
+            writer.tag(13, WireType.Varint).uint32(message.protocolVersion);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
@@ -1452,7 +1477,8 @@ class FailWorkflowExecutionRequest$Type extends MessageType<FailWorkflowExecutio
             { no: 4, name: "identity", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 5, name: "task_token", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
             { no: 6, name: "failure", kind: "message", T: () => Failure },
-            { no: 7, name: "binary_checksum", kind: "scalar", T: 12 /*ScalarType.BYTES*/ }
+            { no: 7, name: "binary_checksum", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 8, name: "protocol_version", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
         ]);
     }
     override create(value?: PartialMessage<FailWorkflowExecutionRequest>): FailWorkflowExecutionRequest {
@@ -1463,6 +1489,7 @@ class FailWorkflowExecutionRequest$Type extends MessageType<FailWorkflowExecutio
         message.identity = "";
         message.taskToken = new Uint8Array(0);
         message.binaryChecksum = new Uint8Array(0);
+        message.protocolVersion = 0;
         if (value !== undefined)
             reflectionMergePartial<FailWorkflowExecutionRequest>(this, message, value!);
         return message;
@@ -1492,6 +1519,9 @@ class FailWorkflowExecutionRequest$Type extends MessageType<FailWorkflowExecutio
                     break;
                 case /* bytes binary_checksum */ 7:
                     message.binaryChecksum = reader.bytes();
+                    break;
+                case /* uint32 protocol_version */ 8:
+                    message.protocolVersion = reader.uint32();
                     break;
                 default:
                     let u = options.readUnknownField;
@@ -1526,6 +1556,9 @@ class FailWorkflowExecutionRequest$Type extends MessageType<FailWorkflowExecutio
         /* bytes binary_checksum = 7; */
         if (message.binaryChecksum.length)
             writer.tag(7, WireType.LengthDelimited).bytes(message.binaryChecksum);
+        /* uint32 protocol_version = 8; */
+        if (message.protocolVersion !== 0)
+            writer.tag(8, WireType.Varint).uint32(message.protocolVersion);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

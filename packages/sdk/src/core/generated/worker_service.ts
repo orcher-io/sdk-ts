@@ -102,6 +102,15 @@ export interface WorkerCapabilities {
      * @generated from protobuf field: uint32 max_concurrent_tasks = 4
      */
     maxConcurrentTasks: number;
+    /**
+     * The worker protocol version this worker speaks, so the engine only sends
+     * it what it can handle. 0 (unset) is every worker from before this field.
+     *   1: handles a workflow cancellation request delivered in the journal,
+     *      letting the workflow clean up before it ends.
+     *
+     * @generated from protobuf field: uint32 protocol_version = 5
+     */
+    protocolVersion: number;
 }
 /**
  * RegisterWorkerResponse reports the result of the registration.
@@ -423,7 +432,8 @@ class WorkerCapabilities$Type extends MessageType<WorkerCapabilities> {
             { no: 1, name: "workflow_types", kind: "scalar", repeat: 2 /*RepeatType.UNPACKED*/, T: 9 /*ScalarType.STRING*/ },
             { no: 2, name: "task_types", kind: "scalar", repeat: 2 /*RepeatType.UNPACKED*/, T: 9 /*ScalarType.STRING*/ },
             { no: 3, name: "max_concurrent_workflows", kind: "scalar", T: 13 /*ScalarType.UINT32*/ },
-            { no: 4, name: "max_concurrent_tasks", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
+            { no: 4, name: "max_concurrent_tasks", kind: "scalar", T: 13 /*ScalarType.UINT32*/ },
+            { no: 5, name: "protocol_version", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
         ]);
     }
     override create(value?: PartialMessage<WorkerCapabilities>): WorkerCapabilities {
@@ -432,6 +442,7 @@ class WorkerCapabilities$Type extends MessageType<WorkerCapabilities> {
         message.taskTypes = [];
         message.maxConcurrentWorkflows = 0;
         message.maxConcurrentTasks = 0;
+        message.protocolVersion = 0;
         if (value !== undefined)
             reflectionMergePartial<WorkerCapabilities>(this, message, value!);
         return message;
@@ -452,6 +463,9 @@ class WorkerCapabilities$Type extends MessageType<WorkerCapabilities> {
                     break;
                 case /* uint32 max_concurrent_tasks */ 4:
                     message.maxConcurrentTasks = reader.uint32();
+                    break;
+                case /* uint32 protocol_version */ 5:
+                    message.protocolVersion = reader.uint32();
                     break;
                 default:
                     let u = options.readUnknownField;
@@ -477,6 +491,9 @@ class WorkerCapabilities$Type extends MessageType<WorkerCapabilities> {
         /* uint32 max_concurrent_tasks = 4; */
         if (message.maxConcurrentTasks !== 0)
             writer.tag(4, WireType.Varint).uint32(message.maxConcurrentTasks);
+        /* uint32 protocol_version = 5; */
+        if (message.protocolVersion !== 0)
+            writer.tag(5, WireType.Varint).uint32(message.protocolVersion);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
