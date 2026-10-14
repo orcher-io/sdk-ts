@@ -319,16 +319,19 @@ pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
             }
 
             let endpoint = tonic::transport::Endpoint::from_shared(server_url.clone())
-                .map_err(|e| crate::error_code::tagged_as("CONNECTION_FAILED", e, "Invalid server URL"))?
+                .map_err(|e| {
+                    crate::error_code::tagged_as("CONNECTION_FAILED", e, "Invalid server URL")
+                })?
                 .tls_config(tls_cfg)
-                .map_err(|e| crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS configuration error"))?
+                .map_err(|e| {
+                    crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS configuration error")
+                })?
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .timeout(std::time::Duration::from_secs(180));
 
-            let channel = endpoint
-                .connect()
-                .await
-                .map_err(|e| crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS connection failed"))?;
+            let channel = endpoint.connect().await.map_err(|e| {
+                crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS connection failed")
+            })?;
 
             WorkflowClient::from_channel(channel).with_namespace(&namespace)
         } else {
@@ -917,8 +920,9 @@ pub fn describe_workflow(mut cx: FunctionContext) -> JsResult<JsPromise> {
             .map_err(|e| crate::error_code::tagged(&e, "Failed to describe workflow"))?;
 
         // `IntoJs` turns the serde_json::Value into a plain JS object.
-        let json_value = serde_json::to_value(&description)
-            .map_err(|e| crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize description"))?;
+        let json_value = serde_json::to_value(&description).map_err(|e| {
+            crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize description")
+        })?;
 
         Ok(json_value)
     })
@@ -1068,8 +1072,9 @@ pub fn list_workflows(mut cx: FunctionContext) -> JsResult<JsPromise> {
             .await
             .map_err(|e| crate::error_code::tagged(&e, "Failed to list workflows"))?;
 
-        let json_value = serde_json::to_value(&page)
-            .map_err(|e| crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize list result"))?;
+        let json_value = serde_json::to_value(&page).map_err(|e| {
+            crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize list result")
+        })?;
 
         Ok(json_value)
     })
@@ -1139,8 +1144,9 @@ pub fn search_workflows(mut cx: FunctionContext) -> JsResult<JsPromise> {
             .await
             .map_err(|e| crate::error_code::tagged(&e, "Failed to search workflows"))?;
 
-        let json_value = serde_json::to_value(&page)
-            .map_err(|e| crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize search result"))?;
+        let json_value = serde_json::to_value(&page).map_err(|e| {
+            crate::error_code::tagged_as("INTERNAL", e, "Failed to serialize search result")
+        })?;
 
         Ok(json_value)
     })

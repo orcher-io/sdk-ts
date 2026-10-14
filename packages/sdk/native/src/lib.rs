@@ -22,14 +22,14 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod actor;
 mod client;
-mod error_code;
 mod codec;
 mod error;
+mod error_code;
 mod journal_times;
 mod runtime;
-mod worker;
 mod types;
 mod utils;
+mod worker;
 
 /// Whether `initialize` has run in this process.
 static INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
