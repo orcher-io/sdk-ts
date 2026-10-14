@@ -57,6 +57,7 @@ use orcher_sdk_core::poller::{
     WorkflowDriverConfig, WorkflowWorkResult,
 };
 use orcher_sdk_core::proto::orcher::v1::actor_service_client::ActorServiceClient;
+use orcher_sdk_core::WorkflowExecutionTask;
 use tonic::transport::Channel;
 
 macro_rules! log_debug {
@@ -370,6 +371,23 @@ impl WorkerHandleType {
 }
 
 impl Finalize for WorkerHandleType {}
+
+/// The request TypeScript runs a workflow activation from: the jobs sdk-core
+/// derives from the task's journal, with the times the jobs lack read from the
+/// journal beside them (`journal_times`).
+pub(crate) fn execution_request_json(
+    task: &WorkflowExecutionTask,
+) -> Result<serde_json::Value, String> {
+    let request = task_to_execution_request(task.clone()).map_err(|e| e.to_string())?;
+    let mut value = serde_json::to_value(&request).map_err(|e| e.to_string())?;
+    if let Some(request) = value.as_object_mut() {
+        request.insert(
+            "journal_times".to_string(),
+            serde_json::json!(JournalTimes::read(&task.journal)),
+        );
+    }
+    Ok(value)
+}
 
 // ============================================================================
 // Create
@@ -808,8 +826,8 @@ pub fn start(mut cx: FunctionContext) -> JsResult<JsPromise> {
                 let workflow_id = workflow_work.task.execution.workflow_id.clone();
                 let run_id = workflow_work.task.execution.run_id.clone();
 
-                let exec_request = match task_to_execution_request(workflow_work.task.clone()) {
-                    Ok(req) => req,
+                let execution_request = match execution_request_json(&workflow_work.task) {
+                    Ok(value) => value,
                     Err(e) => {
                         // Nothing will answer this activation, so it stays claimed until
                         // the engine's claim timeout. The log names which one.
@@ -822,27 +840,6 @@ pub fn start(mut cx: FunctionContext) -> JsResult<JsPromise> {
                         continue;
                     }
                 };
-
-                // The jobs carry no times; the workflow's clock is read from
-                // the journal they came from.
-                let mut execution_request = match serde_json::to_value(&exec_request) {
-                    Ok(value) => value,
-                    Err(e) => {
-                        log_error!(
-                            "Failed to serialize workflow task {}/{}; activation dropped: {}",
-                            workflow_id,
-                            run_id,
-                            e
-                        );
-                        continue;
-                    }
-                };
-                if let Some(request) = execution_request.as_object_mut() {
-                    request.insert(
-                        "journal_times".to_string(),
-                        serde_json::json!(JournalTimes::read(&workflow_work.task.journal)),
-                    );
-                }
 
                 let response = serde_json::json!({
                     "execution_request": execution_request,

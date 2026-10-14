@@ -944,6 +944,33 @@ export interface NativeModule {
    * The run id a handle names; empty for one that names only a workflow.
    */
   workflowHandleRunId(handle: NativeWorkflowHandle): string;
+
+  // The kernel protocol, for checking recorded activations without an engine.
+  // The worker does not use these.
+
+  /**
+   * A recorded activation (an encoded `orcher.v1.PollWorkflowExecutionResponse`)
+   * resolved by the kernel, as an encoded `orcher.kernel.v1.RunActivation`.
+   */
+  kernelResolve?(pollResponse: Buffer, namespace: string): Buffer;
+
+  /**
+   * A recorded activation as the worker hands it to TypeScript today: the JSON
+   * of the execution request, with the journal's times.
+   */
+  legacyExecutionRequest?(pollResponse: Buffer): string;
+
+  /**
+   * An encoded `orcher.kernel.v1.RunActivationResult`, as the JSON of the
+   * result the workflow driver checks and sends. Throws on a protocol error.
+   */
+  kernelExecutionResult?(runId: string, result: Buffer): string;
+
+  /**
+   * The JSON TypeScript answers an activation with today, read as the worker
+   * reads it and written back.
+   */
+  legacyExecutionResult?(resultJson: string): string;
 }
 
 /**
