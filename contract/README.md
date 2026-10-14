@@ -24,6 +24,8 @@ The Python and Rust SDKs carry equivalent checks.
   engine, asserts the outcome, and exits non-zero on any failure.
 - `run.sh`: checks that an engine is reachable, then runs `run.ts`.
 - `long_wait.ts`: a separate long-running check, described below.
+- `kernel-equivalence.ts`: an engine-free check of the kernel-protocol path
+  against recorded activations, described below.
 - `tsconfig.json`: config for `ts-node`.
 
 ## Scenario kinds
@@ -123,3 +125,21 @@ npx ts-node --project contract/tsconfig.json contract/long_wait.ts --sleep-secs 
 # claim anything about the default window.
 npx ts-node --project contract/tsconfig.json contract/long_wait.ts --sleep-secs 5
 ```
+
+### Kernel-protocol equivalence
+
+`kernel-equivalence.ts` runs every recorded workflow activation through both of
+the worker's paths and requires the same result from each: today's (the jobs
+sdk-core derives from the journal, run by `executeWorkflowDirectBindings`) and
+the kernel protocol's (a `RunActivation` resolved by the kernel, run by
+`Worker.runActivation`). No engine is needed. The activations are a recording
+made with `ORCHER_RECORD_ACTIVATIONS` while this harness ran, by default from
+`~/orcher-corpus/typescript`:
+
+```bash
+npx ts-node --project contract/tsconfig.json contract/kernel-equivalence.ts [dir]
+```
+
+It needs the built SDK and native module (`npm run build` in packages/sdk), and
+fails on any activation whose results differ or whose workflow is not in the
+catalog.

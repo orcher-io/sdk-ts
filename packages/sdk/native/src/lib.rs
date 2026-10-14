@@ -26,6 +26,7 @@ mod codec;
 mod error;
 mod error_code;
 mod journal_times;
+mod kernel;
 mod runtime;
 mod types;
 mod utils;
@@ -169,6 +170,13 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("codecChainEncode", codec::codec_chain_encode)?;
     cx.export_function("codecChainDecode", codec::codec_chain_decode)?;
     cx.export_function("codecChainLen", codec::codec_chain_len)?;
+
+    // The kernel protocol, for checking recorded activations without an
+    // engine; the worker does not use these.
+    cx.export_function("kernelResolve", kernel::kernel_resolve)?;
+    cx.export_function("legacyExecutionRequest", kernel::legacy_execution_request)?;
+    cx.export_function("kernelExecutionResult", kernel::kernel_execution_result)?;
+    cx.export_function("legacyExecutionResult", kernel::legacy_execution_result)?;
 
     tracing::info!("ORCHER Core Native module loaded successfully");
 

@@ -5,6 +5,7 @@
  */
 
 import type { DurationInput } from '../workflow/types';
+import type { ReachedStep } from '../workflow/context';
 
 /**
  * A workflow registration accepted by `WorkerOptions.workflows`.
@@ -728,6 +729,12 @@ export interface ExecutionResult {
    * journal recorded to catch code that no longer replays the run.
    */
   reachedSteps?: string[];
+
+  /**
+   * The same steps as `reachedSteps`, with their kinds, for the kernel
+   * protocol, which sends each as a call of its kind.
+   */
+  reached?: ReachedStep[];
 
   /**
    * Workflow context from the execution.

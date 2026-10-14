@@ -132,7 +132,7 @@ export class SessionContext {
     // A step like any other: one number from the workflow's step counter.
     const sequence: number = (this.ctx as any).nextSequence();
     const taskId = `${SESSION_COMPLETE_TASK}_${sequence}`;
-    this.ctx.reachStep(taskId);
+    this.ctx.reachStep(taskId, 'task');
 
     const command: ScheduleTaskCommand = {
       type: WorkflowCommandType.SCHEDULE_TASK,
