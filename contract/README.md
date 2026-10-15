@@ -79,11 +79,12 @@ Start an Orcher engine with gRPC on `localhost:50051` (or set
 environment.
 
 The worker-liveness scenarios (`task-outlives-heartbeat-timeout-without-heartbeat-code`,
-`task-retried-after-its-worker-dies`) need the engine to time out a silent task
-within seconds rather than after its default minute. Start the engine with
+`task-retried-after-its-worker-dies`, `task-timeout-on-last-attempt-reaches-workflow`)
+need the engine to time out a silent task within seconds rather than after its
+default minute. Start the engine with
 `ORCHER_DEFAULT_HEARTBEAT_TIMEOUT_SECS=3 ORCHER_TIMEOUT_WATCHER_POLL_INTERVAL_SECS=1
 ORCHER_TIMEOUT_WATCHER_GRACE_SECS=1`. At the defaults the first fails and the
-second takes a couple of minutes.
+others take a couple of minutes.
 
 Build the SDK and its native module (`npm run build` in `packages/sdk`). Then,
 from the repository root:
