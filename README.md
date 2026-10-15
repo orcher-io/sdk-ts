@@ -265,6 +265,23 @@ export class PaymentTasks {
 Any other error is retried. Set `name` in the constructor if your build
 minifies class names.
 
+A workflow that catches the failure reads its type and whether the task was
+cancelled from the `WorkflowError`:
+
+```typescript
+try {
+  await ctx.executeTask(charge, orderId);
+} catch (e) {
+  // Anything but a task failure, suspension included, goes on up.
+  if (!(e instanceof WorkflowError) || e.taskErrorType === undefined) throw e;
+  if (e.isTaskCancelled) {
+    // the task was cancelled
+  } else if (e.taskErrorType === 'CardDeclined') {
+    // ask for another card
+  }
+}
+```
+
 </details>
 
 <details>

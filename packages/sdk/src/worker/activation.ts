@@ -18,7 +18,7 @@
  * @internal
  */
 
-import { TASK_FAILED_SENTINEL_KEY } from '../errors';
+import { TASK_FAILED_SENTINEL_KEY, type TaskFailureCode } from '../errors';
 import { toPayload } from '../core/bridge/payload';
 import { WorkflowCommandType, WorkflowContext, type ReachedStep } from '../workflow/context';
 import { DEFAULT_MAX_ATTEMPTS, ParentClosePolicy } from '../workflow/types';
@@ -179,6 +179,9 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
               [TASK_FAILED_SENTINEL_KEY]: true,
               message: failure.message,
               error_type: failure.errorType,
+              // Why it failed: 'application' for a task that threw,
+              // 'cancelled' for one that was cancelled, and so on.
+              code: failureCodeName(failure.code, outcome.end),
               attempts: outcome.attempts,
             },
           ]);
@@ -289,6 +292,28 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
     })),
     updates,
   };
+}
+
+/**
+ * A failure code's name in lower case, as a task failure error reports it. A
+ * failure with no code (or one this SDK does not know) takes it from how its
+ * step ended, when that was a cancellation or a timeout, and is otherwise
+ * `'unspecified'`.
+ */
+export function failureCodeName(code: FailureCode, end: End = End.UNSPECIFIED): TaskFailureCode {
+  const name =
+    code === FailureCode.UNSPECIFIED ? undefined : (FailureCode[code] as string | undefined);
+  if (name !== undefined) {
+    return name.toLowerCase() as TaskFailureCode;
+  }
+  switch (end) {
+    case End.CANCELLED:
+      return 'cancelled';
+    case End.TIMED_OUT:
+      return 'timed_out';
+    default:
+      return 'unspecified';
+  }
 }
 
 /**
