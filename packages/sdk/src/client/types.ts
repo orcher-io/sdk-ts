@@ -77,9 +77,11 @@ export interface WorkflowStartOptions {
   /**
    * Workflow-level retry policy (opt-in).
    *
-   * When omitted, a failed workflow is **not** retried. When set with
-   * `maxAttempts > 0`, a failed workflow is retried as a fresh run (new run,
-   * separate event history). Intervals are in milliseconds.
+   * When omitted, a failed workflow is **not** retried. When set, a failed
+   * workflow is retried as a fresh run (new run, separate event history) for
+   * up to `maxAttempts` runs, the first one included; `maxAttempts: 0` retries
+   * without limit, and leaving `maxAttempts` out allows 3. Intervals are in
+   * milliseconds.
    */
   retryPolicy?: Partial<RetryPolicy>;
 

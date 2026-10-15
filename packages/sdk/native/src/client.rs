@@ -82,10 +82,24 @@ fn get_string_array_property(
     Ok(out)
 }
 
+/// Attempts a retry policy allows when it leaves `maxAttempts` out, the first one
+/// included. It is the SDK's documented `RetryPolicy` default (`defaultRetryPolicy()`).
+const DEFAULT_MAX_ATTEMPTS: i32 = 3;
+
+/// The `maximum_attempts` a retry policy sends for the `maxAttempts` it was given.
+///
+/// An omitted count takes [`DEFAULT_MAX_ATTEMPTS`]; it must never become 0, which
+/// the engine reads as unlimited. An explicit 0 stays 0 (unlimited) and any other
+/// count is sent as given, the first attempt included.
+fn maximum_attempts(max_attempts: Option<f64>) -> i32 {
+    max_attempts.map_or(DEFAULT_MAX_ATTEMPTS, |n| n as i32)
+}
+
 /// Parse the optional workflow-level `retryPolicy` from the JS start options.
 ///
-/// Intervals are in milliseconds. `backoffCoefficient` defaults to 2 and `maxAttempts`
-/// to 0. Returns `None` when `retryPolicy` is absent.
+/// Intervals are in milliseconds. `backoffCoefficient` defaults to 2 and an omitted
+/// `maxAttempts` to [`DEFAULT_MAX_ATTEMPTS`]; an explicit 0 means unlimited. Returns
+/// `None` when `retryPolicy` is absent.
 fn parse_retry_policy(
     cx: &mut FunctionContext,
     options: Handle<JsObject>,
@@ -100,7 +114,7 @@ fn parse_retry_policy(
         backoff_coefficient: get_number_property(cx, rp, "backoffCoefficient")?.unwrap_or(2.0),
         maximum_interval: get_number_property(cx, rp, "maxInterval")?
             .map(|ms| ms_to_proto_duration(ms as i64)),
-        maximum_attempts: get_number_property(cx, rp, "maxAttempts")?.unwrap_or(0.0) as i32,
+        maximum_attempts: maximum_attempts(get_number_property(cx, rp, "maxAttempts")?),
         non_retryable_error_types: get_string_array_property(cx, rp, "nonRetryableErrorTypes")?,
         ..Default::default()
     }))
@@ -1230,6 +1244,22 @@ pub fn client_invoke_actor_operation(mut cx: FunctionContext) -> JsResult<JsProm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_omitted_max_attempts_sends_the_documented_default() {
+        assert_eq!(maximum_attempts(None), 3);
+    }
+
+    #[test]
+    fn an_explicit_zero_max_attempts_stays_unlimited() {
+        assert_eq!(maximum_attempts(Some(0.0)), 0);
+    }
+
+    #[test]
+    fn an_explicit_max_attempts_is_sent_as_given() {
+        assert_eq!(maximum_attempts(Some(1.0)), 1);
+        assert_eq!(maximum_attempts(Some(5.0)), 5);
+    }
 
     #[test]
     fn a_cancellation_sets_no_cleanup_limit_by_default() {

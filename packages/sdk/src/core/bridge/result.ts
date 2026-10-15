@@ -17,6 +17,7 @@ import type {
   StepFailure,
   TaskRetryPolicy,
 } from './types';
+import { DEFAULT_MAX_ATTEMPTS } from '../../workflow/types';
 
 /**
  * Create a successful ExecutionResult
@@ -363,7 +364,7 @@ export function respondToQueryFromError(queryId: string, error: Error): Command 
  */
 export function defaultRetryPolicy(): TaskRetryPolicy {
   return {
-    maxAttempts: 3,
+    maxAttempts: DEFAULT_MAX_ATTEMPTS,
     initialInterval: 1000, // 1 second
     maxInterval: 60000, // 1 minute
     backoffCoefficient: 2.0,

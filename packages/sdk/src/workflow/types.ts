@@ -179,14 +179,22 @@ export class Duration {
 }
 
 /**
- * Retry policy for tasks.
+ * Attempts a retry policy allows when it leaves `maxAttempts` out, the first
+ * one included.
+ */
+export const DEFAULT_MAX_ATTEMPTS = 3;
+
+/**
+ * Retry policy for tasks and workflows.
  *
  * Intervals are in milliseconds. The engine works in whole seconds, so
  * sub-second intervals are rounded down.
  */
 export interface RetryPolicy {
   /**
-   * Maximum number of retry attempts. 0 retries without limit.
+   * Maximum number of attempts, the first one included: 1 never retries and
+   * 3 allows two retries. 0 retries without limit. A policy that leaves it
+   * out gets {@link DEFAULT_MAX_ATTEMPTS} (3), never unlimited.
    */
   maxAttempts: number;
 

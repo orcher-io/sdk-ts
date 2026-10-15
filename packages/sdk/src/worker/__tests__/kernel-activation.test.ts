@@ -150,6 +150,30 @@ describe('a kernel activation', () => {
     expect(loadActivation(activation, 'default').context.attempt()).toBe(reads);
   });
 
+  it.each([
+    ['an omitted count as the documented default', {}, 3],
+    ['an explicit 0 as unlimited', { maxAttempts: 0 }, 0],
+    ['an explicit count as given', { maxAttempts: 5 }, 5],
+  ])('sends a task retry policy with %s', (_, counts, sent) => {
+    const commands = kernelCommands(
+      [
+        {
+          type: WorkflowCommandType.SCHEDULE_TASK,
+          sequence: 0,
+          taskId: 'ship_0',
+          taskType: 'ship',
+          taskQueue: 'q',
+          input: {},
+          retryPolicy: { initialInterval: 1_000, ...counts },
+        },
+      ],
+      [{ kind: 'task' as const, id: 'ship_0' }]
+    );
+    const what = commands[0]?.what;
+    if (what?.oneofKind !== 'runTask') throw new Error('no task');
+    expect(what.runTask.retryPolicy?.maxAttempts).toBe(sent);
+  });
+
   it('answers a command the protocol cannot carry with a protocol error', () => {
     const result = answerActivation(
       new Uint8Array(),
