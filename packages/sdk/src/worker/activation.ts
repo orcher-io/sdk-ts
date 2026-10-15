@@ -128,6 +128,11 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
       workflowId: run.workflowId || run.runId,
       runId: run.runId,
       workflowType: run.workflowType,
+      // The engine counts a run's attempt from 1 (2 for the run of its first
+      // workflow-level retry) and the kernel hands it over as is. Engines
+      // before orcher#356 numbered the first run 0; it reads as 1, so a first
+      // run is still the first attempt there. On a current engine the floor
+      // never applies.
       attempt: Math.max(started?.attempt ?? 1, 1),
       namespace: run.namespace || namespace,
       taskQueue: run.taskQueue,
