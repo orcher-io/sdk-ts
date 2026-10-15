@@ -70,8 +70,8 @@ describe('child workflow handle', () => {
 
   it.each([
     ['canceled', { kind: 'canceled' } as ChildOutcome, /canceled/],
-    // The kernel does not carry the reason a child was terminated for.
-    ['terminated', { kind: 'terminated', reason: 'by hand' } as ChildOutcome, /terminated/],
+    ['terminated', { kind: 'terminated', reason: 'by hand' } as ChildOutcome, /terminated: by hand/],
+    ['terminated without a reason', { kind: 'terminated', reason: '' } as ChildOutcome, /terminated$/],
     ['timed out', { kind: 'timed_out' } as ChildOutcome, /timed out/],
   ])('fails the result of a child that was %s', async (_label, outcome, message) => {
     const activate = runner(async (ctx) => {

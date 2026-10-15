@@ -18,6 +18,7 @@ import type { Logger } from '../../types';
 import type { WorkflowContext } from '../../../workflow/context';
 import {
   End,
+  FailureCode,
   type Command,
   type Outcome,
   type Resolution,
@@ -199,7 +200,7 @@ export class FakeEngine {
       case 'canceled':
         return settle(ended(End.CANCELLED));
       case 'terminated':
-        return settle(ended(End.TERMINATED));
+        return settle(terminated(this.child.reason));
       case 'timed_out':
         return settle(ended(End.TIMED_OUT));
     }
@@ -216,6 +217,24 @@ function completed(data: Uint8Array): Outcome {
 
 function ended(end: End): Outcome {
   return { result: { oneofKind: undefined }, end, attempts: 1 };
+}
+
+/** A terminated child, as the kernel resolves it: the reason is the failure's message. */
+function terminated(reason: string): Outcome {
+  return {
+    result: {
+      oneofKind: 'failure',
+      failure: {
+        message: reason,
+        errorType: '',
+        nonRetryable: false,
+        code: FailureCode.TERMINATED,
+        details: new Uint8Array(),
+      },
+    },
+    end: End.TERMINATED,
+    attempts: 1,
+  };
 }
 
 /** A step an activation issued: its kind, its id, and the work it names. */

@@ -239,7 +239,9 @@ export interface RetryPolicy {
      */
     maxDelay?: Duration;
     /**
-     * Maximum number of attempts, the first included. 0 takes the default.
+     * Maximum number of attempts, the first included. 0 is unlimited, as the
+     * engine reads it. A policy left out altogether takes the kernel's
+     * defaults.
      *
      * @generated from protobuf field: uint32 max_attempts = 4
      */
@@ -1150,6 +1152,13 @@ export interface RestartFresh {
      * @generated from protobuf field: repeated orcher.kernel.v1.Payload input = 3
      */
     input: Payload[];
+    /**
+     * The new run's execution timeout. Unset: the engine's default, as for a
+     * run started without one.
+     *
+     * @generated from protobuf field: google.protobuf.Duration execution_timeout = 4
+     */
+    executionTimeout?: Duration;
 }
 /**
  * UpsertLabels sets labels on the run for search. Compared on its kind only.
@@ -3986,7 +3995,8 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
         super("orcher.kernel.v1.RestartFresh", [
             { no: 1, name: "workflow_type", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 2, name: "task_queue", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
-            { no: 3, name: "input", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => Payload }
+            { no: 3, name: "input", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => Payload },
+            { no: 4, name: "execution_timeout", kind: "message", T: () => Duration }
         ]);
     }
     override create(value?: PartialMessage<RestartFresh>): RestartFresh {
@@ -4012,6 +4022,9 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
                 case /* repeated orcher.kernel.v1.Payload input */ 3:
                     message.input.push(Payload.internalBinaryRead(reader, reader.uint32(), options));
                     break;
+                case /* google.protobuf.Duration execution_timeout */ 4:
+                    message.executionTimeout = Duration.internalBinaryRead(reader, reader.uint32(), options, message.executionTimeout);
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -4033,6 +4046,9 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
         /* repeated orcher.kernel.v1.Payload input = 3; */
         for (let i = 0; i < message.input.length; i++)
             Payload.internalBinaryWrite(message.input[i], writer.tag(3, WireType.LengthDelimited).fork(), options).join();
+        /* google.protobuf.Duration execution_timeout = 4; */
+        if (message.executionTimeout)
+            Duration.internalBinaryWrite(message.executionTimeout, writer.tag(4, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

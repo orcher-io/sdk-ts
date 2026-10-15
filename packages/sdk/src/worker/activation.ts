@@ -195,8 +195,16 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
             results.push([key, childFailed('child workflow was canceled')]);
             break;
           case End.TERMINATED:
-            // The kernel does not carry the reason a child was terminated for.
-            results.push([key, childFailed('child workflow was terminated')]);
+            // The failure's message is the reason given for the termination,
+            // empty when none was.
+            results.push([
+              key,
+              childFailed(
+                failure?.message
+                  ? `child workflow was terminated: ${failure.message}`
+                  : 'child workflow was terminated'
+              ),
+            ]);
             break;
           case End.TIMED_OUT:
             results.push([key, childFailed('child workflow timed out')]);
@@ -514,17 +522,14 @@ function kernelCommand(command: any): Command {
     case WorkflowCommandType.CANCEL_WORKFLOW:
       return call(0, '', { oneofKind: 'endCancelled', endCancelled: { details: '' } });
     case WorkflowCommandType.RESTART_FRESH:
-      if (command.timeout !== undefined && command.timeout !== null) {
-        throw new ProtocolRefusal(
-          'the workflow restarted with a timeout, which the kernel protocol does not carry'
-        );
-      }
       return call(0, '', {
         oneofKind: 'restartFresh',
         restartFresh: {
           workflowType: command.workflowType ?? '',
           taskQueue: command.taskQueue ?? '',
           input: inputPayloads(command.input),
+          executionTimeout:
+            typeof command.timeout === 'number' ? duration(command.timeout) : undefined,
         },
       });
     default:
