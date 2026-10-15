@@ -37,6 +37,7 @@ import {
   type Payload,
   type QueryAnswer,
   type RetryPolicy,
+  type Resolution,
   type RunActivation,
   type RunActivationResult,
   type UpdateAnswer,
@@ -99,6 +100,18 @@ export interface ActivationOutcome {
 export class ProtocolRefusal extends Error {}
 
 /**
+ * Where a resolution comes in the order the run observes its outcomes: the
+ * sequence the kernel numbered it with. Which of two outcomes came first, a
+ * wait's result or a cancellation request, is decided by it, never by their
+ * times, which tie within a millisecond. A resolution the kernel did not
+ * number (one built by hand) keeps its place in the list, the same order.
+ */
+function orderOf(position: number, resolution: Resolution): number {
+  const sequence = Number(resolution.sequence ?? 0);
+  return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : position + 1;
+}
+
+/**
  * Loads an activation's resolutions into a context for its run, as the
  * history holds them.
  *
@@ -144,27 +157,38 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
     startedAt ? millis(startedAt) : Date.now()
   );
 
-  // When each outcome was recorded, keyed as the context holds it: the first
-  // outcome of a key is the one the run observes.
+  // When each outcome was recorded, and where it comes in the order the run
+  // observes its outcomes, keyed as the context holds it: the first outcome
+  // of a key is the one the run observes.
   const resolvedAt: Record<string, number> = {};
-  const noteResolvedAt = (key: string, at: Timestamp | undefined) => {
+  const resolvedOrder: Record<string, number> = {};
+  const noteResolvedAt = (key: string, at: Timestamp | undefined, order: number) => {
     if (at && !(key in resolvedAt)) {
       resolvedAt[key] = millis(at);
+    }
+    if (!(key in resolvedOrder)) {
+      resolvedOrder[key] = order;
     }
   };
 
   const results: Array<[string, unknown]> = [];
-  const events: Array<{ name: string; payload: unknown; position: number; atMs?: number }> = [];
+  const events: Array<{
+    name: string;
+    payload: unknown;
+    position: number;
+    atMs?: number;
+    order: number;
+  }> = [];
   const updates: AskedUpdate[] = [];
-  let cancelAtMs: number | undefined;
-  let cancelAsked = false;
+  let cancelOrder: number | undefined;
 
   activation.resolutions.forEach((resolution, position) => {
     const what = resolution.what;
     const stepId = resolution.stepId;
+    const order = orderOf(position, resolution);
     switch (what.oneofKind) {
       case 'step': {
-        noteResolvedAt(stepId, resolution.at);
+        noteResolvedAt(stepId, resolution.at, order);
         const outcome = what.step.outcome;
         if (outcome?.result.oneofKind === 'value') {
           const value = decodeStepResult(outcome.result.value.data);
@@ -191,7 +215,7 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
       case 'child': {
         const workflowId = what.child.childWorkflowId;
         const key = `child:${workflowId}`;
-        noteResolvedAt(key, resolution.at);
+        noteResolvedAt(key, resolution.at, order);
         const outcome = what.child.outcome;
         const failure =
           outcome?.result.oneofKind === 'failure' ? outcome.result.failure : undefined;
@@ -229,7 +253,7 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
       }
       case 'timer':
         if (stepId) {
-          noteResolvedAt(`timer:${stepId}`, resolution.at);
+          noteResolvedAt(`timer:${stepId}`, resolution.at, order);
           // Where it fired among the outcomes: a wait with a deadline takes
           // whichever of its event and its timer the run observed first.
           results.push([`timer:${stepId}`, { firedAt: position }]);
@@ -243,6 +267,7 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
             payload: data && data.length > 0 ? (decodeJsonOr(data, null) ?? null) : null,
             position,
             atMs: resolution.at ? millis(resolution.at) : undefined,
+            order,
           });
         }
         break;
@@ -255,10 +280,8 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
         break;
       case 'cancel':
         // The first request is the one the run is told of.
-        if (!cancelAsked) {
-          cancelAsked = true;
-          const at = what.cancel.requestedAt ?? resolution.at;
-          cancelAtMs = at ? millis(at) : undefined;
+        if (cancelOrder === undefined) {
+          cancelOrder = order;
         }
         break;
       // A child history records as started keeps the id it was started under,
@@ -271,14 +294,15 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
   });
 
   context.recordResolvedAt(resolvedAt);
-  if (cancelAsked) {
-    context.noteCancelRequested(cancelAtMs);
+  context.recordResolvedOrder(resolvedOrder);
+  if (cancelOrder !== undefined) {
+    context.noteCancelRequested(cancelOrder);
   }
   for (const [key, value] of results) {
     context.injectStepResult(key, value);
   }
-  for (const { name, payload, position, atMs } of events) {
-    context.bufferEvent(name, payload, position, atMs);
+  for (const { name, payload, position, atMs, order } of events) {
+    context.bufferEvent(name, payload, position, atMs, order);
   }
 
   return {

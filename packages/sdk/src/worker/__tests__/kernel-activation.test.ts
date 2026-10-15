@@ -9,7 +9,7 @@
 import { Worker } from '../worker';
 import { answerActivation, kernelCommands, loadActivation } from '../activation';
 import { WorkflowCommandType, type WorkflowContext } from '../../workflow/context';
-import { TASK_FAILED_SENTINEL_KEY, WorkflowError } from '../../errors';
+import { TASK_FAILED_SENTINEL_KEY, WorkflowError, isWorkflowCancellation } from '../../errors';
 import {
   End,
   FailureCode,
@@ -48,6 +48,7 @@ function activationOf(workflowType: string, resolutions: Resolution[]): RunActiv
         stepId: '',
         at: at(1_000),
         replaying: false,
+        sequence: '0',
         what: {
           oneofKind: 'started',
           started: {
@@ -71,6 +72,7 @@ const settled = (stepId: string, value: unknown, ms: number): Resolution => ({
   stepId,
   at: at(ms),
   replaying: false,
+  sequence: '0',
   what: {
     oneofKind: 'step',
     step: {
@@ -193,6 +195,7 @@ describe('a kernel activation', () => {
           stepId: 'charge_0',
           at: at(2_000),
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'step',
             step: {
@@ -217,6 +220,7 @@ describe('a kernel activation', () => {
           stepId: 'child_1',
           at: at(3_000),
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'child',
             child: {
@@ -230,12 +234,14 @@ describe('a kernel activation', () => {
           stepId: 'timer_2',
           at: at(4_000),
           replaying: false,
+          sequence: '0',
           what: { oneofKind: 'timer', timer: {} },
         },
         {
           stepId: '',
           at: at(5_000),
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'event',
             event: { eventId: '9', name: 'go', payload: json({ ok: true }) },
@@ -245,6 +251,7 @@ describe('a kernel activation', () => {
           stepId: '',
           at: at(6_000),
           replaying: false,
+          sequence: '0',
           what: { oneofKind: 'cancel', cancel: { reason: 'user', requestedAt: at(6_000) } },
         },
       ]),
@@ -267,6 +274,89 @@ describe('a kernel activation', () => {
     expect(loaded.input).toEqual({ n: 1 });
     expect(loaded.context.isReplaying()).toBe(true);
     expect(loaded.context.time.now().getTime()).toBe(1_000);
+  });
+
+  // A task failure and the cancel request recorded in the same millisecond,
+  // listed failure first, numbered as given: the numbers, not the list or the
+  // times, say which came first.
+  const failedAndAskedToCancel = (failure: string, cancel: string) =>
+    activationOf('pay', [
+      {
+        stepId: 'charge_0',
+        at: at(2_000),
+        replaying: false,
+        sequence: failure,
+        what: {
+          oneofKind: 'step',
+          step: {
+            outcome: {
+              result: {
+                oneofKind: 'failure',
+                failure: {
+                  message: 'Task cancelled',
+                  errorType: 'Cancelled',
+                  nonRetryable: true,
+                  code: 3,
+                  details: new Uint8Array(),
+                },
+              },
+              end: End.CANCELLED,
+              attempts: 1,
+            },
+          },
+        },
+      },
+      {
+        stepId: '',
+        at: at(2_000),
+        replaying: false,
+        sequence: cancel,
+        what: { oneofKind: 'cancel', cancel: { reason: 'user', requestedAt: at(2_000) } },
+      },
+    ]);
+
+  const firstWait = async (activation: RunActivation) => {
+    const { context } = loadActivation(activation, 'default');
+    try {
+      await context.executeTask(taskRef('charge'), 0);
+      return { context, thrown: undefined as unknown };
+    } catch (thrown) {
+      return { context, thrown };
+    }
+  };
+
+  it("orders a failure in the cancel request's millisecond by sequence", async () => {
+    // The failure first: it is the wait's result, and the next wait is told.
+    const before = await firstWait(failedAndAskedToCancel('2', '3'));
+    expect(isWorkflowCancellation(before.thrown)).toBe(false);
+    expect(before.context.isCancelRequested()).toBe(false);
+
+    // The request first: the wait is told, and cleanup runs after it.
+    const after = await firstWait(failedAndAskedToCancel('3', '2'));
+    expect(isWorkflowCancellation(after.thrown)).toBe(true);
+    expect(after.context.isCancelRequested()).toBe(true);
+  });
+
+  it('tells the run of the first cancel request only', async () => {
+    const activation = failedAndAskedToCancel('4', '3');
+    activation.resolutions.push({
+      stepId: '',
+      at: at(2_000),
+      replaying: false,
+      sequence: '5',
+      what: { oneofKind: 'cancel', cancel: { reason: 'again', requestedAt: at(2_000) } },
+    });
+    const told = await firstWait(activation);
+    expect(isWorkflowCancellation(told.thrown)).toBe(true);
+  });
+
+  it('keeps unnumbered resolutions in their place in the list', async () => {
+    const activation = failedAndAskedToCancel('3', '2');
+    for (const resolution of activation.resolutions) {
+      resolution.sequence = '0';
+    }
+    const unnumbered = await firstWait(activation);
+    expect(isWorkflowCancellation(unnumbered.thrown)).toBe(false);
   });
 
   it('runs the workflow and sends its finished steps satisfied', async () => {
@@ -315,6 +405,7 @@ describe('a task failure loaded from an activation', () => {
           stepId,
           at: at(2_000),
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'step',
             step: {

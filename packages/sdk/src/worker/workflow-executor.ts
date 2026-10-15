@@ -498,7 +498,10 @@ export class WorkflowExecutor {
       context.recordResolvedAt(request.journalTimes.resolvedAt);
     }
     if (request.cancelRequested) {
-      context.noteCancelRequested(request.journalTimes?.cancelRequestedAt);
+      // A request built by hand carries no order of outcomes: every result it
+      // holds is received, and the request is delivered at the first wait
+      // without one.
+      context.noteCancelRequested(undefined);
     }
 
     // Cached step results let the replaying workflow reuse recorded task and closure

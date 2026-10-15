@@ -20,10 +20,10 @@ neon = { version = "1.0", default-features = false, features = ["napi-6", "futur
 # Orcher SDK Core, from crates.io, with the protocol types it re-exports
 # (orcher_sdk_core::proto), so the build has one orcher-proto. To build
 # against local checkouts instead, see .cargo/config.example.toml.
-orcher-sdk-core = "0.15"
+orcher-sdk-core = "0.16"
 # The worker host: one worker's drivers, lifecycle and registration, shared
 # with the Rust and Python SDKs. This crate binds it for TypeScript.
-orcher-sdk-host = "0.15"
+orcher-sdk-host = "0.16"
 
 # gRPC
 tonic = { version = "0.12", features = ["transport", "tls", "tls-native-roots"] }

@@ -62,6 +62,7 @@ describe('@Update handlers', () => {
           stepId: '',
           at,
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'started',
             started: {
@@ -79,6 +80,7 @@ describe('@Update handlers', () => {
           stepId: '',
           at,
           replaying: false,
+          sequence: '0',
           what: {
             oneofKind: 'update',
             update: {

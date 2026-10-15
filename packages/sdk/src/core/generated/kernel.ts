@@ -324,6 +324,17 @@ export interface Resolution {
      */
     replaying: boolean;
     /**
+     * Where this outcome comes in the order the run observes its outcomes:
+     * greater than that of every resolution before it in the activation, so
+     * two outcomes compare by it exactly where their `at` may tie (two
+     * outcomes recorded in the same millisecond). Which of two outcomes came
+     * first is decided by it, never by `at`. Only its order is meaningful, not
+     * its value. 0 from a kernel that predates it.
+     *
+     * @generated from protobuf field: uint64 sequence = 4
+     */
+    sequence: string;
+    /**
      * What happened.
      *
      * @generated from protobuf oneof: what
@@ -560,10 +571,10 @@ export interface UpdateArrived {
     args: Payload[];
 }
 /**
- * CancelAsked says the run was asked to cancel. The kernel places it at the
- * one wait it is delivered to: the first durable wait whose outcome history
- * did not record at or before `requested_at`. Later waits run normally, so
- * the run can clean up.
+ * CancelAsked says the run was asked to cancel. It is delivered at one wait:
+ * the first durable wait that has no outcome, or whose outcome's resolution
+ * comes after this one's (a greater `sequence`). Later waits run normally, so
+ * the run can clean up. Only the first CancelAsked of a run is delivered.
  *
  * @generated from protobuf message orcher.kernel.v1.CancelAsked
  */
@@ -575,7 +586,8 @@ export interface CancelAsked {
      */
     reason: string;
     /**
-     * When the request was recorded.
+     * When the request was recorded. Informational: where the request falls
+     * among the run's outcomes is its resolution's `sequence`.
      *
      * @generated from protobuf field: google.protobuf.Timestamp requested_at = 2
      */
@@ -2129,6 +2141,7 @@ class Resolution$Type extends MessageType<Resolution> {
             { no: 1, name: "step_id", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 2, name: "at", kind: "message", T: () => Timestamp },
             { no: 3, name: "replaying", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 4, name: "sequence", kind: "scalar", T: 4 /*ScalarType.UINT64*/ },
             { no: 10, name: "started", kind: "message", oneof: "what", T: () => RunStarted },
             { no: 11, name: "step", kind: "message", oneof: "what", T: () => StepSettled },
             { no: 12, name: "child", kind: "message", oneof: "what", T: () => ChildSettled },
@@ -2143,6 +2156,7 @@ class Resolution$Type extends MessageType<Resolution> {
         const message = globalThis.Object.create((this.messagePrototype!));
         message.stepId = "";
         message.replaying = false;
+        message.sequence = "0";
         message.what = { oneofKind: undefined };
         if (value !== undefined)
             reflectionMergePartial<Resolution>(this, message, value!);
@@ -2161,6 +2175,9 @@ class Resolution$Type extends MessageType<Resolution> {
                     break;
                 case /* bool replaying */ 3:
                     message.replaying = reader.bool();
+                    break;
+                case /* uint64 sequence */ 4:
+                    message.sequence = reader.uint64().toString();
                     break;
                 case /* orcher.kernel.v1.RunStarted started */ 10:
                     message.what = {
@@ -2231,6 +2248,9 @@ class Resolution$Type extends MessageType<Resolution> {
         /* bool replaying = 3; */
         if (message.replaying !== false)
             writer.tag(3, WireType.Varint).bool(message.replaying);
+        /* uint64 sequence = 4; */
+        if (message.sequence !== "0")
+            writer.tag(4, WireType.Varint).uint64(message.sequence);
         /* orcher.kernel.v1.RunStarted started = 10; */
         if (message.what.oneofKind === "started")
             RunStarted.internalBinaryWrite(message.what.started, writer.tag(10, WireType.LengthDelimited).fork(), options).join();

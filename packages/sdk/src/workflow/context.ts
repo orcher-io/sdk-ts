@@ -1500,11 +1500,11 @@ export class WorkflowContext {
   async waitForEvent<T = any>(eventName: string): Promise<T> {
     EventHelpers.validateEventName(eventName);
 
-    // The oldest event of this name is received if the journal recorded it before
-    // any cancellation request; otherwise the request is delivered here.
+    // The oldest event of this name is received if it came before any
+    // cancellation request; otherwise the request is delivered here.
     this.cancellationAt(
       this.eventManager.getBuffer().has(eventName),
-      this.bufferedEventTimes.get(eventName)?.[0]
+      this.bufferedEventOrders.get(eventName)?.[0]
     );
 
     // If event is already buffered (replay path), return it immediately.
@@ -1598,12 +1598,12 @@ export class WorkflowContext {
     {
       const received: Array<number | undefined> = [];
       if (this.eventManager.getBuffer().has(eventName)) {
-        received.push(this.bufferedEventTimes.get(eventName)?.[0]);
+        received.push(this.bufferedEventOrders.get(eventName)?.[0]);
       }
       if (timerFired) {
-        received.push(this.resolvedAt.get(`timer:${timerId}`));
+        received.push(this.resolvedOrder.get(`timer:${timerId}`));
       }
-      const known = received.filter((at): at is number => at !== undefined);
+      const known = received.filter((order): order is number => order !== undefined);
       this.cancellationAt(
         received.length > 0,
         known.length > 0 && known.length === received.length ? Math.min(...known) : undefined
@@ -1666,10 +1666,20 @@ export class WorkflowContext {
    * @param position - The event's journal position among this activation's
    *   jobs. Omitted means "before everything", so the event wins any race
    *   with a deadline timer.
+   * @param atMs - When the engine journaled it, if known.
+   * @param order - Where it comes in the order the run observes its
+   *   outcomes, if known, to tell whether it came before a cancellation
+   *   request.
    *
    * @internal
    */
-  bufferEvent(eventName: string, payload: any, position?: number, atMs?: number): void {
+  bufferEvent(
+    eventName: string,
+    payload: any,
+    position?: number,
+    atMs?: number,
+    order?: number
+  ): void {
     this.eventManager.bufferEvent(eventName, payload);
     const positions = this.bufferedEventPositions.get(eventName) ?? [];
     positions.push(position ?? Number.NEGATIVE_INFINITY);
@@ -1677,6 +1687,9 @@ export class WorkflowContext {
     const times = this.bufferedEventTimes.get(eventName) ?? [];
     times.push(atMs);
     this.bufferedEventTimes.set(eventName, times);
+    const orders = this.bufferedEventOrders.get(eventName) ?? [];
+    orders.push(order);
+    this.bufferedEventOrders.set(eventName, orders);
   }
 
   /** Journal positions of buffered events, kept in step with the buffer. */
@@ -1685,10 +1698,15 @@ export class WorkflowContext {
   /** When each buffered event was journaled, kept in step with the buffer. */
   private readonly bufferedEventTimes = new Map<string, Array<number | undefined>>();
 
+  /** Where each buffered event comes in the run's order of outcomes, kept in
+   * step with the buffer. */
+  private readonly bufferedEventOrders = new Map<string, Array<number | undefined>>();
+
   /** Take the next buffered event for a name, keeping positions in step. The
    * workflow's clock moves to when the event was journaled. */
   private takeBufferedEvent(eventName: string): any {
     this.bufferedEventPositions.get(eventName)?.shift();
+    this.bufferedEventOrders.get(eventName)?.shift();
     const atMs = this.bufferedEventTimes.get(eventName)?.shift();
     if (atMs !== undefined) {
       this._time.advanceTo(atMs);
@@ -1955,17 +1973,36 @@ export class WorkflowContext {
   /** When each result was journaled; see `recordResolvedAt`. */
   private readonly resolvedAt = new Map<string, number>();
 
+  /**
+   * Record where each result this activation can hand the workflow comes in
+   * the order the run observes its outcomes (the kernel's resolution
+   * sequence), keyed as `recordResolvedAt`. Which of a result and a
+   * cancellation request came first is decided by it, never by times, which
+   * tie within a millisecond.
+   *
+   * @internal Used by the activation loader before the workflow runs
+   */
+  recordResolvedOrder(resolvedOrder: Record<string, number>): void {
+    for (const [key, order] of Object.entries(resolvedOrder)) {
+      if (Number.isFinite(order)) {
+        this.resolvedOrder.set(key, order);
+      }
+    }
+  }
+
+  /** Where each result comes in the run's order; see `recordResolvedOrder`. */
+  private readonly resolvedOrder = new Map<string, number>();
+
   /** Whether the journal holds a request to cancel the workflow. */
   private cancelRequested = false;
 
-  /** When the journal recorded that request, ms since the epoch, when known. */
-  private cancelRequestedAt: number | undefined;
+  /** Where that request comes in the run's order of outcomes, when known. */
+  private cancelRequestedOrder: number | undefined;
 
   /**
    * Whether the code has been told of the request. It is told once, at the first
-   * wait whose result the journal did not record before the request: the same
-   * wait on every replay, since the code's order and the journal's times are
-   * both fixed.
+   * wait whose result does not come before the request: the same wait on every
+   * replay, since the code's order and the history's order are both fixed.
    */
   private cancelDelivered = false;
 
@@ -1984,30 +2021,35 @@ export class WorkflowContext {
   }
 
   /**
-   * The journal holds a request to cancel the workflow, recorded at `atMs` (ms
-   * since the epoch) when known.
+   * The journal holds a request to cancel the workflow, at `order` in the order
+   * the run observes its outcomes when known. The first request is the one the
+   * run is told of; a later one changes nothing.
    *
-   * @internal Used by the executor before the workflow runs
+   * @internal Used by the activation loader before the workflow runs
    */
-  noteCancelRequested(atMs: number | undefined): void {
+  noteCancelRequested(order: number | undefined): void {
+    if (this.cancelRequested) {
+      return;
+    }
     this.cancelRequested = true;
-    this.cancelRequestedAt = atMs;
+    this.cancelRequestedOrder = order;
   }
 
   /**
    * Throw the cancellation here if this wait is where the code learns of the
    * request: one has come, the code has not been told, and this wait's result
-   * (`present`, recorded at `atMs` if known) was not recorded before it. A result
-   * recorded no later than the request is received; one with no known time is
-   * too, since it exists.
+   * (`present`, at `order` in the run's order of outcomes if known) does not
+   * come before it. A result that comes before the request is received; one
+   * with no known place is too, since it exists. The order decides, never
+   * times, which tie within a millisecond.
    */
-  private cancellationAt(present: boolean, atMs: number | undefined): void {
+  private cancellationAt(present: boolean, order: number | undefined): void {
     if (!this.cancelRequested || this.cancelDelivered) {
       return;
     }
     if (present) {
-      const requestedAt = this.cancelRequestedAt;
-      if (atMs === undefined || requestedAt === undefined || atMs <= requestedAt) {
+      const requested = this.cancelRequestedOrder;
+      if (order === undefined || requested === undefined || order < requested) {
         return;
       }
     }
@@ -2017,7 +2059,7 @@ export class WorkflowContext {
 
   /** As `cancellationAt`, for the result held under `key`. */
   private cancellationFor(key: string): void {
-    this.cancellationAt(this.state.pendingTaskResults.has(key), this.resolvedAt.get(key));
+    this.cancellationAt(this.state.pendingTaskResults.has(key), this.resolvedOrder.get(key));
   }
 
   /**
