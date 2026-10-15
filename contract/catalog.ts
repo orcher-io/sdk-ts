@@ -614,3 +614,109 @@ export const cancelSaga = workflow<{ key: string }, unknown>({
     throw new Error('the sleep finished; the cancellation never arrived');
   },
 });
+
+// ---------------------------------------------------------------------------
+// A cancellation ends the tasks the workflow had queued: a task scheduled
+// before the request, that no worker had started, never starts. Observed
+// in-process, keyed by the `key` the harness passes as input.
+// ---------------------------------------------------------------------------
+
+/** Keys whose queued task's handler ran. It must never run: the harness starts
+ * a worker able to run it only after the cancellation. */
+export const queuedTaskRan = new Set<string>();
+
+/** Keys whose cleanup task ran. */
+export const cleanupRan = new Set<string>();
+
+/** How the workflow's wait on its queued task ended, by key. */
+export const queuedTaskWait = new Map<string, string>();
+
+/** The task the workflow queues before it is cancelled. Retries are allowed,
+ * so only the cancellation can be what keeps it from running. */
+export const cancelQueued = task<{ key: string }, string>({
+  name: 'cancel_queued',
+  retryPolicy: { maxAttempts: 3 },
+  execute: async (_ctx: TaskContext, input: { key: string }): Promise<string> => {
+    queuedTaskRan.add(input.key);
+    return 'ran';
+  },
+});
+
+/** The cleanup the workflow runs once told it is cancelled. */
+export const cancelQueuedCleanup = task<{ key: string }, string>({
+  name: 'cancel_queued_cleanup',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (_ctx: TaskContext, input: { key: string }): Promise<string> => {
+    cleanupRan.add(input.key);
+    return 'cleaned';
+  },
+});
+
+/** Parks on a task no worker can start yet; when the wait ends, records how,
+ * runs cleanup, and lets the cancellation end the run. */
+export const cancelQueuedTask = workflow<{ key: string }, unknown>({
+  name: 'cancel_queued_task',
+  run: async (ctx: WorkflowContext, input: { key: string }): Promise<unknown> => {
+    parkedWorkflows.add(input.key);
+    let cancellation: unknown;
+    let wait: string;
+    try {
+      await ctx.executeTask(cancelQueued, { key: input.key });
+      wait = 'completed';
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      if (isWorkflowCancellation(e)) {
+        wait = 'cancellation';
+        cancellation = e;
+      } else if (err?.code === ExecutionErrorCode.TASK_EXECUTION_FAILED) {
+        wait = `task_failed: ${err.message}`;
+      } else {
+        // Suspension, while the task is queued, passes through.
+        throw e;
+      }
+    }
+    queuedTaskWait.set(input.key, wait);
+    await ctx.executeTask(cancelQueuedCleanup, { key: input.key });
+    if (cancellation !== undefined) throw cancellation;
+    // Not told at the wait: completing lets the harness report the mismatch.
+    return { queued_task_wait: wait };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// A task timing out on its last attempt reaches its workflow.
+// ---------------------------------------------------------------------------
+
+/** As `exit_if_worker_doomed`, with a single attempt: the timeout that ends it
+ * is its last. */
+export const exitIfWorkerDoomedOnce = task<Record<string, never>, unknown>({
+  name: 'exit_if_worker_doomed_once',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<unknown> => {
+    if (process.env.ORCHER_CONTRACT_DOOMED_WORKER) {
+      process.stderr.write('contract: exit_if_worker_doomed_once is taking its worker down\n');
+      process.exit(3);
+    }
+    return { survived_worker_death: true };
+  },
+});
+
+/** Runs a task that takes its worker down on its only attempt, catches the
+ * failure its timeout ends in, and reports it. */
+export const taskTimeoutTerminal = workflow<unknown, unknown>({
+  name: 'task_timeout_terminal',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    try {
+      await ctx.executeTask(exitIfWorkerDoomedOnce, {});
+    } catch (e) {
+      const err = e as { code?: string; message?: string; details?: { taskType?: string } };
+      if (err?.code !== ExecutionErrorCode.TASK_EXECUTION_FAILED) throw e;
+      return {
+        caught: true,
+        task_type: err.details?.taskType ?? '',
+        timed_out: (err.message ?? '').toLowerCase().includes('timed out'),
+      };
+    }
+    return { caught: false, task_type: '', timed_out: false };
+  },
+});

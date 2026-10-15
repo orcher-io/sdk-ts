@@ -59,6 +59,14 @@ import {
   cancelCleanup,
   cancelReserve,
   cancelRelease,
+  cancelQueued,
+  cancelQueuedCleanup,
+  cancelQueuedTask,
+  queuedTaskRan,
+  queuedTaskWait,
+  cleanupRan,
+  exitIfWorkerDoomedOnce,
+  taskTimeoutTerminal,
 } from './catalog';
 import { execSync, spawn, type ChildProcess } from 'child_process';
 
@@ -105,6 +113,9 @@ interface Scenario {
      * rather than a value: a parked workflow is activated a few times, and
      * "a few" is the contract, not an exact number. */
     result_at_most?: Record<string, number>;
+    /** What the worker observed in-process, for `kind: "cancel_queued_task"`,
+     * whose workflow ends cancelled and so returns no result. */
+    observed?: unknown;
   };
   /** Named client call to make, for `kind: "client_error"`. */
   client_call?: string;
@@ -579,6 +590,88 @@ async function runCancelScenario(
   return [false, `unknown expected status '${sc.expect.status}' for a cancel scenario`];
 }
 
+/** Runs one queued-task cancellation scenario.
+ *
+ * The workflow starts on a queue of its own, served by a worker that runs
+ * workflows and no tasks, so the task it schedules and parks on waits for a
+ * worker. Once it has parked it is cancelled, and only then is a worker that
+ * runs tasks started on the queue: a queued task the cancellation failed to
+ * end would start there. The workflow's cleanup runs on it too. The run must
+ * end cancelled, and what the worker observed must match `expect.observed`. */
+async function runCancelQueuedTaskScenario(
+  client: Client,
+  serverUrl: string,
+  namespace: string,
+  timeoutMs: number,
+  sc: Scenario
+): Promise<[boolean, string]> {
+  if (!sc.workflow || !sc.expect)
+    return [false, 'cancel_queued_task scenario missing `workflow`/`expect`'];
+
+  const key = `conf-${randomUUID()}`;
+  const taskQueue = `contract-queued-${randomUUID()}`;
+  const input = { ...(isObject(sc.input) ? sc.input : {}), key };
+  // With no task registered a worker does not poll for tasks, so a task
+  // scheduled on its queue waits.
+  const startWorker = async (runTasks: boolean): Promise<Worker> => {
+    const worker = new Worker({
+      serverUrl,
+      namespace,
+      taskQueue,
+      workflows: [cancelQueuedTask],
+      tasks: runTasks ? [cancelQueued, cancelQueuedCleanup] : [],
+    });
+    await worker.run();
+    return worker;
+  };
+
+  const workers = [await startWorker(false)];
+  try {
+    const handle = await client.startWorkflow({
+      workflowType: sc.workflow,
+      taskQueue,
+      args: [input],
+    });
+    if (!(await waitUntilParked(key, timeoutMs))) {
+      await handle.cancel().catch(() => undefined);
+      return [false, 'the workflow never parked'];
+    }
+    // Let the engine record the activation that scheduled the task, so the
+    // request comes after it, as it does for a task queued for real.
+    await sleep(500);
+    await handle.cancel();
+    workers.push(await startWorker(true));
+
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const status = String(await handle.status());
+      if (status === 'CANCELLED') break;
+      if (status !== 'RUNNING' || Date.now() >= deadline) {
+        return [false, `expected the workflow cancelled, it is ${status}`];
+      }
+      await sleep(200);
+    }
+    // A queued task the cancellation missed would be claimed by now; give its
+    // handler a moment to be seen running.
+    await sleep(1000);
+
+    const observed = {
+      queued_task_ran: queuedTaskRan.has(key),
+      queued_task_wait: queuedTaskWait.get(key) ?? null,
+      cleanup_ran: cleanupRan.has(key),
+    };
+    if (jsonMatches(sc.expect.observed ?? {}, observed)) return [true, ''];
+    return [
+      false,
+      `observed mismatch\n    expected: ${JSON.stringify(sc.expect.observed)}\n    actual:   ${JSON.stringify(observed)}`,
+    ];
+  } finally {
+    for (const worker of workers) {
+      await worker.shutdown().catch(() => undefined);
+    }
+  }
+}
+
 /** Runs one engine-restart scenario: restarts the engine with the command in
  * `ORCHER_CONTRACT_RESTART_CMD`, then starts a workflow and expects the worker,
  * untouched, to pick it up and complete it.
@@ -777,6 +870,7 @@ async function main(): Promise<void> {
       cancelSleep,
       cancelCleanupWorkflow,
       cancelSaga,
+      taskTimeoutTerminal,
     ],
     tasks: [
       alwaysFail,
@@ -791,6 +885,7 @@ async function main(): Promise<void> {
       cancelCleanup,
       cancelReserve,
       cancelRelease,
+      exitIfWorkerDoomedOnce,
     ],
   });
   try {
@@ -825,6 +920,8 @@ async function main(): Promise<void> {
       [ok, msg] = await runEventScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'cancel') {
       [ok, msg] = await runCancelScenario(client, taskQueue, timeoutMs, sc);
+    } else if (sc.kind === 'cancel_queued_task') {
+      [ok, msg] = await runCancelQueuedTaskScenario(client, serverUrl, namespace, timeoutMs, sc);
     } else if (sc.kind === 'engine_restart') {
       [ok, msg] = await runEngineRestartScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'worker_crash') {
