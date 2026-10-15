@@ -324,6 +324,12 @@ export const typedFailure = workflow<unknown, unknown>({
   },
 });
 
+/** Returns the attempt this run reads. A first run is attempt 1. */
+export const reportAttempt = workflow<unknown, unknown>({
+  name: 'report_attempt',
+  run: async (ctx: WorkflowContext): Promise<unknown> => ({ attempt: ctx.attempt() }),
+});
+
 // --- Event catalog -----------------------------------------------------------
 //
 // These cover the wait-for-event path end to end: the activation that parks

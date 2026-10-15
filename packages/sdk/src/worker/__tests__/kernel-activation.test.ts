@@ -135,6 +135,21 @@ describe('a kernel activation', () => {
     expect(first?.oneofKind === 'runTask' && first.runTask.input).toEqual([]);
   });
 
+  it.each([
+    [1, 1],
+    [2, 2],
+    [0, 1],
+  ])('reads attempt %i as %i', (attempt, reads) => {
+    // A first run is attempt 1 and the run of its first retry attempt 2, as
+    // the engine numbers them. An engine before orcher#356 numbers the first
+    // run 0, which reads as 1.
+    const activation = activationOf('wf', []);
+    const start = activation.resolutions[0]!.what;
+    if (start.oneofKind !== 'started') throw new Error('no start');
+    start.started.attempt = attempt;
+    expect(loadActivation(activation, 'default').context.attempt()).toBe(reads);
+  });
+
   it('answers a command the protocol cannot carry with a protocol error', () => {
     const result = answerActivation(
       new Uint8Array(),
