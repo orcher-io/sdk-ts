@@ -221,6 +221,39 @@ export class OrchestrationError extends OrcherError {
 export const TASK_FAILED_SENTINEL_KEY = '__orcher_task_failed__';
 
 /**
+ * Why a task failed, as the engine recorded it: `'application'` for a task
+ * whose code threw, `'cancelled'` for a cancelled one, and so on. The names
+ * are the kernel protocol's failure codes in lower case. New codes may be
+ * added, so handle a value you do not recognize.
+ */
+export type TaskFailureCode =
+  | 'unspecified'
+  | 'application'
+  | 'timed_out'
+  | 'cancelled'
+  | 'terminated'
+  | 'non_determinism'
+  | 'payload_too_large'
+  | 'invalid_command';
+
+/**
+ * The failure a task failure error carries besides its task type, attempts and
+ * reason.
+ */
+export interface TaskFailureDetails {
+  /**
+   * The failure's type, as a retry policy's non-retryable list names it: for
+   * a task that threw, the error's name. Empty when there is none.
+   */
+  errorType?: string;
+  /** Why the task failed. `'unspecified'` when the engine gave no code. */
+  failureCode?: TaskFailureCode;
+}
+
+/** The failure type a cancelled task's failure is recorded under. */
+const CANCELLED_FAILURE_TYPE = 'Cancelled';
+
+/**
  * An error raised during workflow execution.
  *
  * Covers task failures, invalid state, determinism violations, and
@@ -233,13 +266,60 @@ export class WorkflowError extends OrchestrationError {
     Object.setPrototypeOf(this, WorkflowError.prototype);
   }
 
-  /** A task that failed after exhausting its attempts. */
-  static taskFailed(taskType: string, attempts: number, reason: string): WorkflowError {
+  /**
+   * A task that failed after exhausting its attempts. `failure` is the
+   * failure's type and code as the engine recorded them; see
+   * {@link WorkflowError.taskErrorType} and {@link WorkflowError.isTaskCancelled}.
+   */
+  static taskFailed(
+    taskType: string,
+    attempts: number,
+    reason: string,
+    failure: TaskFailureDetails = {}
+  ): WorkflowError {
     return new WorkflowError(
       `Task '${taskType}' failed after ${attempts} attempts: ${reason}`,
       ErrorCode.TASK_EXECUTION_FAILED,
-      { taskType, attempts, reason }
+      {
+        taskType,
+        attempts,
+        reason,
+        errorType: failure.errorType ?? '',
+        failureCode: failure.failureCode ?? 'unspecified',
+      }
     );
+  }
+
+  /**
+   * The type of a task failure (code `TASK_EXECUTION_FAILED`), such as the
+   * name of the error the task threw; empty for a failure of no particular
+   * type, and `undefined` for any other error.
+   */
+  get taskErrorType(): string | undefined {
+    if (this.code !== ErrorCode.TASK_EXECUTION_FAILED) {
+      return undefined;
+    }
+    return typeof this.details?.errorType === 'string' ? this.details.errorType : '';
+  }
+
+  /**
+   * Why a task failure (code `TASK_EXECUTION_FAILED`) failed, such as
+   * `'application'` or `'cancelled'`; `undefined` for any other error.
+   */
+  get taskFailureCode(): TaskFailureCode | undefined {
+    if (this.code !== ErrorCode.TASK_EXECUTION_FAILED) {
+      return undefined;
+    }
+    return (this.details?.failureCode as TaskFailureCode | undefined) ?? 'unspecified';
+  }
+
+  /**
+   * Whether this is a task failure for a task that was cancelled: its code is
+   * `'cancelled'`, or its type is `'Cancelled'`, which is how an engine that
+   * does not categorize failures records a cancellation.
+   */
+  get isTaskCancelled(): boolean {
+    return this.taskFailureCode === 'cancelled' || this.taskErrorType === CANCELLED_FAILURE_TYPE;
   }
 
   /** A child workflow that failed. */

@@ -590,10 +590,7 @@ export class WorkflowContext {
       const cached = this.state.pendingTaskResults.get(taskId);
       // A terminal task failure from the engine arrives as a sentinel value. Decode it
       // and throw a catchable error instead of returning it as a success value.
-      if (cached && typeof cached === 'object' && (cached as any)[TASK_FAILED_SENTINEL_KEY]) {
-        const c = cached as any;
-        throw WorkflowError.taskFailed(taskName, c.attempts ?? 1, c.message ?? 'Task failed');
-      }
+      throwIfTaskFailed(taskName, cached, 'Task failed');
       return cached as O;
     }
 
@@ -716,6 +713,10 @@ export class WorkflowContext {
     if (this.state.pendingTaskResults.has(taskId)) {
       this.observe(taskId);
       const cached = this.state.pendingTaskResults.get(taskId);
+      // A creation that failed (no worker had a free slot in time, say)
+      // arrives as a task failure: raise it rather than open a session with
+      // no queue.
+      throwIfTaskFailed(SESSION_CREATE_TASK, cached, 'Session creation failed');
       return new SessionCtx(this, {
         session_id: cached.session_id ?? sessionId,
         session_queue: cached.session_queue,
@@ -793,10 +794,7 @@ export class WorkflowContext {
     // A journaled result means the closure already ran.
     if (this.state.pendingTaskResults.has(stepId)) {
       const cached = this.state.pendingTaskResults.get(stepId);
-      if (cached && typeof cached === 'object' && (cached as any)[TASK_FAILED_SENTINEL_KEY]) {
-        const c = cached as any;
-        throw WorkflowError.taskFailed(stepName, c.attempts ?? 1, c.message ?? 'Step failed');
-      }
+      throwIfTaskFailed(stepName, cached, 'Step failed');
       return cached as T;
     }
 
@@ -2085,5 +2083,19 @@ export class WorkflowContext {
    */
   getPendingTaskResults(): Map<string, any> {
     return new Map(this.state.pendingTaskResults);
+  }
+}
+
+/**
+ * Throws the task failure a journaled result holds, when it is the sentinel a
+ * terminal task failure is journaled as; returns otherwise.
+ */
+function throwIfTaskFailed(taskType: string, cached: unknown, fallbackMessage: string): void {
+  if (cached && typeof cached === 'object' && (cached as any)[TASK_FAILED_SENTINEL_KEY]) {
+    const c = cached as any;
+    throw WorkflowError.taskFailed(taskType, c.attempts ?? 1, c.message || fallbackMessage, {
+      errorType: c.error_type ?? '',
+      failureCode: c.code ?? 'unspecified',
+    });
   }
 }

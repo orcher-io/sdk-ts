@@ -155,7 +155,7 @@ export {
   toOrcherError,
   wrapError,
 } from './errors/index';
-export type { WorkflowOutcomeDetails } from './errors/index';
+export type { WorkflowOutcomeDetails, TaskFailureCode, TaskFailureDetails } from './errors/index';
 
 // The durable task retry policy is the one public `RetryPolicy`. The SDK has no
 // in-process retry helper, because durable workflows delegate retries to the engine.

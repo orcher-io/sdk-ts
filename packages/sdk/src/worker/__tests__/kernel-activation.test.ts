@@ -9,14 +9,16 @@
 import { Worker } from '../worker';
 import { answerActivation, kernelCommands, loadActivation } from '../activation';
 import { WorkflowCommandType, type WorkflowContext } from '../../workflow/context';
-import { TASK_FAILED_SENTINEL_KEY } from '../../errors';
+import { TASK_FAILED_SENTINEL_KEY, WorkflowError } from '../../errors';
 import {
   End,
+  FailureCode,
   type Command,
   type Resolution,
   type RunActivation,
 } from '../../core/generated/kernel';
 import { taskRef } from './support/fake-engine';
+import { SESSION_CREATE_TASK } from '../../workflow/session';
 
 // A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
@@ -253,6 +255,7 @@ describe('a kernel activation', () => {
       [TASK_FAILED_SENTINEL_KEY]: true,
       message: 'declined',
       error_type: 'CardDeclined',
+      code: 'application',
       attempts: 3,
     });
     expect(results.get('child:child_1')).toEqual({
@@ -300,5 +303,129 @@ describe('a kernel activation', () => {
     const answer = await (worker as any).runActivation(activationOf('unknown', []));
     expect(answer.outcome.oneofKind).toBe('workflowFailed');
     expect(answer.outcome.workflowFailed.message).toBe('Workflow not registered: unknown');
+  });
+});
+
+describe('a task failure loaded from an activation', () => {
+  /** What the workflow's code sees when it runs a `charge` task that failed so. */
+  function failedStep(stepId: string, errorType: string, code: FailureCode, end: End) {
+    return loadActivation(
+      activationOf('wf', [
+        {
+          stepId,
+          at: at(2_000),
+          replaying: false,
+          what: {
+            oneofKind: 'step',
+            step: {
+              outcome: {
+                result: {
+                  oneofKind: 'failure',
+                  failure: {
+                    message: 'it failed',
+                    errorType,
+                    nonRetryable: false,
+                    code,
+                    details: new Uint8Array(),
+                  },
+                },
+                end,
+                attempts: 2,
+              },
+            },
+          },
+        },
+      ]),
+      'default'
+    );
+  }
+
+  async function failureSeen(
+    errorType: string,
+    code: FailureCode,
+    end: End = End.FAILED
+  ): Promise<WorkflowError> {
+    const loaded = failedStep('charge_0', errorType, code, end);
+    const error = await loaded.context.executeTask(taskRef('charge'), {}).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(WorkflowError);
+    return error as WorkflowError;
+  }
+
+  it('carries the type the task failed with', async () => {
+    const error = await failureSeen('CardDeclined', FailureCode.APPLICATION);
+    expect(error.taskErrorType).toBe('CardDeclined');
+    expect(error.taskFailureCode).toBe('application');
+    expect(error.isTaskCancelled).toBe(false);
+    expect(error.details).toMatchObject({ taskType: 'charge', attempts: 2, reason: 'it failed' });
+  });
+
+  it('says a task with the cancelled code was cancelled', async () => {
+    const error = await failureSeen('Cancelled', FailureCode.CANCELLED, End.CANCELLED);
+    expect(error.taskFailureCode).toBe('cancelled');
+    expect(error.isTaskCancelled).toBe(true);
+  });
+
+  it('says a failure of type Cancelled with the application code was cancelled', async () => {
+    // How sdk-core 0.15.0 records a cancelled task.
+    const error = await failureSeen('Cancelled', FailureCode.APPLICATION);
+    expect(error.taskFailureCode).toBe('application');
+    expect(error.taskErrorType).toBe('Cancelled');
+    expect(error.isTaskCancelled).toBe(true);
+  });
+
+  it('reads a code it does not know as unspecified', async () => {
+    const error = await failureSeen('', 99 as FailureCode);
+    expect(error.taskFailureCode).toBe('unspecified');
+    expect(error.taskErrorType).toBe('');
+    expect(error.isTaskCancelled).toBe(false);
+  });
+
+  it('takes a cancellation or a timeout from how the step ended when it has no code', async () => {
+    const cancelled = await failureSeen('', FailureCode.UNSPECIFIED, End.CANCELLED);
+    expect(cancelled.taskFailureCode).toBe('cancelled');
+    expect(cancelled.isTaskCancelled).toBe(true);
+    const timedOut = await failureSeen('', FailureCode.UNSPECIFIED, End.TIMED_OUT);
+    expect(timedOut.taskFailureCode).toBe('timed_out');
+    expect(timedOut.isTaskCancelled).toBe(false);
+    // A code, when there is one, wins over how the step ended.
+    const coded = await failureSeen('Boom', FailureCode.APPLICATION, End.CANCELLED);
+    expect(coded.taskFailureCode).toBe('application');
+  });
+
+  it('raises a failed session creation instead of opening a session', async () => {
+    const loaded = failedStep(
+      `${SESSION_CREATE_TASK}_0`,
+      'SessionUnavailable',
+      FailureCode.APPLICATION,
+      End.FAILED
+    );
+    const error = await loaded.context.createSession().then(
+      (session) => session,
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(WorkflowError);
+    expect((error as WorkflowError).taskErrorType).toBe('SessionUnavailable');
+    expect((error as WorkflowError).details).toMatchObject({
+      taskType: SESSION_CREATE_TASK,
+      attempts: 2,
+      reason: 'it failed',
+    });
+  });
+
+  it('is undefined on an error that is not a task failure', () => {
+    const error = WorkflowError.childWorkflowFailed('child', 'c-1', 'Cancelled');
+    expect(error.taskErrorType).toBeUndefined();
+    expect(error.taskFailureCode).toBeUndefined();
+    expect(error.isTaskCancelled).toBe(false);
+  });
+
+  it('defaults a failure built without a type or code', () => {
+    const error = WorkflowError.taskFailed('charge', 1, 'boom');
+    expect(error.taskErrorType).toBe('');
+    expect(error.taskFailureCode).toBe('unspecified');
+    expect(error.isTaskCancelled).toBe(false);
   });
 });

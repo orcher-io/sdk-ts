@@ -107,6 +107,23 @@ export const taskNonRetryableListed = workflow<unknown, unknown>({
   run: (ctx: WorkflowContext) => attemptsUntilFailure(ctx, declineCard),
 });
 
+/** Catches a task's typed failure and reports its type and whether it was cancelled. */
+export const taskFailureType = workflow<unknown, unknown>({
+  name: 'task_failure_type',
+  run: async (ctx: WorkflowContext) => {
+    try {
+      await ctx.executeTask(declineCard, {});
+    } catch (e) {
+      // Anything but a task failure, suspension included, goes on up.
+      if (!(e instanceof WorkflowError) || e.taskErrorType === undefined) {
+        throw e;
+      }
+      return { caught: true, error_type: e.taskErrorType, cancelled: e.isTaskCancelled };
+    }
+    return { caught: false, error_type: '', cancelled: false };
+  },
+});
+
 /** A failure raised as non-retryable is not retried. */
 export const taskNonRetryableMarked = workflow<unknown, unknown>({
   name: 'task_non_retryable_marked',
