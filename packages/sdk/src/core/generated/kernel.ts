@@ -1171,6 +1171,13 @@ export interface RestartFresh {
      * @generated from protobuf field: google.protobuf.Duration execution_timeout = 4
      */
     executionTimeout?: Duration;
+    /**
+     * How the new run is retried. Unset: it keeps the retry policy of the run
+     * it replaces.
+     *
+     * @generated from protobuf field: orcher.kernel.v1.RetryPolicy retry_policy = 5
+     */
+    retryPolicy?: RetryPolicy;
 }
 /**
  * UpsertLabels sets labels on the run for search. Compared on its kind only.
@@ -4016,7 +4023,8 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
             { no: 1, name: "workflow_type", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 2, name: "task_queue", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 3, name: "input", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => Payload },
-            { no: 4, name: "execution_timeout", kind: "message", T: () => Duration }
+            { no: 4, name: "execution_timeout", kind: "message", T: () => Duration },
+            { no: 5, name: "retry_policy", kind: "message", T: () => RetryPolicy }
         ]);
     }
     override create(value?: PartialMessage<RestartFresh>): RestartFresh {
@@ -4045,6 +4053,9 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
                 case /* google.protobuf.Duration execution_timeout */ 4:
                     message.executionTimeout = Duration.internalBinaryRead(reader, reader.uint32(), options, message.executionTimeout);
                     break;
+                case /* orcher.kernel.v1.RetryPolicy retry_policy */ 5:
+                    message.retryPolicy = RetryPolicy.internalBinaryRead(reader, reader.uint32(), options, message.retryPolicy);
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -4069,6 +4080,9 @@ class RestartFresh$Type extends MessageType<RestartFresh> {
         /* google.protobuf.Duration execution_timeout = 4; */
         if (message.executionTimeout)
             Duration.internalBinaryWrite(message.executionTimeout, writer.tag(4, WireType.LengthDelimited).fork(), options).join();
+        /* orcher.kernel.v1.RetryPolicy retry_policy = 5; */
+        if (message.retryPolicy)
+            RetryPolicy.internalBinaryWrite(message.retryPolicy, writer.tag(5, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

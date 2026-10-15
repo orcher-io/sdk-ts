@@ -301,6 +301,7 @@ pub fn host_heartbeat(mut cx: FunctionContext) -> JsResult<JsObject> {
             Some(Payload {
                 data: array.as_slice(&cx).to_vec(),
                 metadata: [("encoding".to_string(), b"json".to_vec())].into(),
+                ..Default::default()
             })
         }
         _ => None,

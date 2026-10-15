@@ -24,23 +24,36 @@ import { WorkflowCommandType, WorkflowContext, type ReachedStep } from '../workf
 import { DEFAULT_MAX_ATTEMPTS, ParentClosePolicy } from '../workflow/types';
 import type { Duration } from '../core/generated/google/protobuf/duration';
 import type { Timestamp } from '../core/generated/google/protobuf/timestamp';
+// Messages are built with `create()`, so a field added to the protocol takes
+// its default here instead of breaking the build.
 import {
+  AwaitEvent,
+  CancelChild,
+  CancelTimer,
+  Command,
+  Commands,
   CompleteRun,
   End,
+  EndCancelled,
+  Failure,
+  FailRun,
   FailureCode,
+  Outcome,
   OrphanPolicy,
+  Payload,
+  ProtocolError,
+  QueryAnswer,
+  RecordValue,
+  RestartFresh,
+  RetryPolicy,
   RunTask,
+  SendEvent,
   StartChild,
   StartTimer,
-  type Command,
-  type Failure,
-  type Payload,
-  type QueryAnswer,
-  type RetryPolicy,
+  UpdateAnswer,
   type Resolution,
   type RunActivation,
-  type RunActivationResult,
-  type UpdateAnswer,
+  RunActivationResult,
 } from '../core/generated/kernel';
 
 /** A query the activation asks the workflow to answer. */
@@ -356,7 +369,7 @@ export function answerActivation(
     updates: updates.map(updateAnswer),
   };
   if (!outcome.success) {
-    return {
+    return RunActivationResult.create({
       ...answered,
       outcome: {
         oneofKind: 'workflowFailed',
@@ -369,16 +382,18 @@ export function answerActivation(
               : FailureCode.APPLICATION,
         }),
       },
-    };
+    });
   }
   try {
-    return {
+    return RunActivationResult.create({
       ...answered,
       outcome: {
         oneofKind: 'commands',
-        commands: { commands: kernelCommands(outcome.commands ?? [], outcome.reached ?? []) },
+        commands: Commands.create({
+          commands: kernelCommands(outcome.commands ?? [], outcome.reached ?? []),
+        }),
       },
-    };
+    });
   } catch (error) {
     if (error instanceof ProtocolRefusal) {
       return protocolError(activationId, error.message);
@@ -389,12 +404,10 @@ export function answerActivation(
 
 /** An activation the SDK could not process, answered as such. */
 export function protocolError(activationId: Uint8Array, message: string): RunActivationResult {
-  return {
+  return RunActivationResult.create({
     activationId,
-    outcome: { oneofKind: 'protocolError', protocolError: { message, kind: 0 } },
-    queries: [],
-    updates: [],
-  };
+    outcome: { oneofKind: 'protocolError', protocolError: ProtocolError.create({ message }) },
+  });
 }
 
 /**
@@ -502,12 +515,12 @@ function kernelCommand(command: any): Command {
     case WorkflowCommandType.START_TIMER:
       return call(seq, command.timerId, {
         oneofKind: 'startTimer',
-        startTimer: { duration: duration(command.durationMs ?? 0) },
+        startTimer: StartTimer.create({ duration: duration(command.durationMs ?? 0) }),
       });
     case WorkflowCommandType.CANCEL_TIMER:
       return call(seq, '', {
         oneofKind: 'cancelTimer',
-        cancelTimer: { stepId: command.timerId },
+        cancelTimer: CancelTimer.create({ stepId: command.timerId }),
       });
     case WorkflowCommandType.START_CHILD_WORKFLOW:
       return call(seq, '', {
@@ -523,40 +536,42 @@ function kernelCommand(command: any): Command {
         }),
       });
     case WorkflowCommandType.CANCEL_CHILD_WORKFLOW:
-      return call(0, '', { oneofKind: 'cancelChild', cancelChild: { stepId: command.workflowId } });
+      return call(0, '', {
+        oneofKind: 'cancelChild',
+        cancelChild: CancelChild.create({ stepId: command.workflowId }),
+      });
     case WorkflowCommandType.SEND_EVENT:
       // Any run of the target receives it.
       return call(0, '', {
         oneofKind: 'sendEvent',
-        sendEvent: {
+        sendEvent: SendEvent.create({
           workflowId: command.targetWorkflowId,
           runId: '',
           name: command.eventName,
-          payload: { data: jsonBytes(command.payload), metadata: {} },
-          headers: {},
-        },
+          payload: Payload.create({ data: jsonBytes(command.payload) }),
+        }),
       });
     case WorkflowCommandType.RECORD_STEP_RESULT:
       return call(0, command.stepName, {
         oneofKind: 'recordValue',
-        recordValue: {
-          outcome: {
+        recordValue: RecordValue.create({
+          outcome: Outcome.create({
             result: {
               oneofKind: 'value',
-              value: { data: jsonBytes(command.result), metadata: {} },
+              value: Payload.create({ data: jsonBytes(command.result) }),
             },
             end: End.COMPLETED,
             attempts: 1,
-          },
-        },
+          }),
+        }),
       });
     case WorkflowCommandType.WAIT_FOR_EVENT:
       return call(0, command.stepId, {
         oneofKind: 'awaitEvent',
-        awaitEvent: {
+        awaitEvent: AwaitEvent.create({
           name: command.eventName,
           timeout: typeof command.timeoutMs === 'number' ? duration(command.timeoutMs) : undefined,
-        },
+        }),
       });
     case WorkflowCommandType.COMPLETE_WORKFLOW:
       return call(0, '', {
@@ -566,25 +581,25 @@ function kernelCommand(command: any): Command {
     case WorkflowCommandType.FAIL_WORKFLOW:
       return call(0, '', {
         oneofKind: 'failRun',
-        failRun: {
+        failRun: FailRun.create({
           failure: failure({
             message: command.message ?? '',
             errorType: command.errorType ?? '',
           }),
-        },
+        }),
       });
     case WorkflowCommandType.CANCEL_WORKFLOW:
-      return call(0, '', { oneofKind: 'endCancelled', endCancelled: { details: '' } });
+      return call(0, '', { oneofKind: 'endCancelled', endCancelled: EndCancelled.create() });
     case WorkflowCommandType.RESTART_FRESH:
       return call(0, '', {
         oneofKind: 'restartFresh',
-        restartFresh: {
+        restartFresh: RestartFresh.create({
           workflowType: command.workflowType ?? '',
           taskQueue: command.taskQueue ?? '',
           input: inputPayloads(command.input),
           executionTimeout:
             typeof command.timeout === 'number' ? duration(command.timeout) : undefined,
-        },
+        }),
       });
     default:
       throw new ProtocolRefusal(
@@ -594,7 +609,7 @@ function kernelCommand(command: any): Command {
 }
 
 function call(seq: number, stepId: string, what: Command['what'], isSatisfied = false): Command {
-  return { seq: String(seq), satisfied: isSatisfied, stepId, what };
+  return Command.create({ seq: String(seq), satisfied: isSatisfied, stepId, what });
 }
 
 /**
@@ -606,21 +621,21 @@ function inputPayloads(input: unknown): Payload[] {
     return [];
   }
   const payload = toPayload(input);
-  return [{ data: payload.data, metadata: { ...payload.metadata } }];
+  return [Payload.create({ data: payload.data, metadata: { ...payload.metadata } })];
 }
 
 /** A payload the executor holds as number arrays. */
 function payloadOf(payload: HandlerPayload | undefined): Payload {
-  return {
+  return Payload.create({
     data: Uint8Array.from(payload?.data ?? []),
     metadata: Object.fromEntries(
       Object.entries(payload?.metadata ?? {}).map(([key, value]) => [key, Uint8Array.from(value)])
     ),
-  };
+  });
 }
 
 function retryPolicy(policy: any): RetryPolicy {
-  return {
+  return RetryPolicy.create({
     maxAttempts: policy.maxAttempts ?? policy.max_attempts ?? DEFAULT_MAX_ATTEMPTS,
     firstDelay: duration(policy.initialInterval ?? policy.initial_interval ?? 1000),
     maxDelay: duration(policy.maxInterval ?? policy.max_interval ?? 60000),
@@ -632,7 +647,7 @@ function retryPolicy(policy: any): RetryPolicy {
       policy.nonRetryableErrors ??
       policy.non_retryable_errors ??
       [],
-  };
+  });
 }
 
 function orphanPolicy(policy: unknown): OrphanPolicy {
@@ -648,13 +663,13 @@ function orphanPolicy(policy: unknown): OrphanPolicy {
 
 function queryAnswer(response: HandlerQueryResponse): QueryAnswer {
   const result = response.result;
-  return {
+  return QueryAnswer.create({
     queryId: response.query_id,
     answer:
       'Success' in result
         ? { oneofKind: 'value', value: payloadOf(result.Success.output) }
         : { oneofKind: 'failure', failure: failure({ message: result.Failed.message }) },
-  };
+  });
 }
 
 function updateAnswer(response: HandlerUpdateResponse): UpdateAnswer {
@@ -667,18 +682,11 @@ function updateAnswer(response: HandlerUpdateResponse): UpdateAnswer {
   } else {
     answer = { oneofKind: 'failed', failed: failure({ message: result.Failed.message }) };
   }
-  return { updateId: response.update_id, answer };
+  return UpdateAnswer.create({ updateId: response.update_id, answer });
 }
 
 function failure(fields: Partial<Failure>): Failure {
-  return {
-    message: '',
-    errorType: '',
-    nonRetryable: false,
-    code: FailureCode.UNSPECIFIED,
-    details: new Uint8Array(),
-    ...fields,
-  };
+  return Failure.create({ code: FailureCode.UNSPECIFIED, ...fields });
 }
 
 function childFailed(message: string): { __orcher_child_failed__: true; message: string } {
