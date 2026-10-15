@@ -1,12 +1,11 @@
 /**
- * Commands go out as the kernel protocol carries them; one it cannot carry is
- * refused with a protocol error, which hands the activation back rather than
- * failing the run.
+ * Commands go out as the kernel protocol carries them, with the values the
+ * workflow gave them.
  */
 
 import { Duration } from '../../workflow/types';
 import type { WorkflowContext } from '../../workflow/context';
-import { FakeEngine, activation, bytes, runner, taskRef } from './support/fake-engine';
+import { FakeEngine, bytes, runner, taskRef } from './support/fake-engine';
 
 // A worker connects to nothing until run(), which none of these call.
 jest.mock('../../core/native', () => ({
@@ -35,14 +34,24 @@ describe('commands as the kernel protocol carries them', () => {
   it.each([
     ['milliseconds', 90_000],
     ['a Duration', Duration.fromSeconds(90)],
-  ])('refuses a restart with a timeout, given in %s', async (_label, timeout) => {
-    const answered = await activation(async (ctx) => {
+  ])('sends a restart timeout, given in %s, as a Duration', async (_label, timeout) => {
+    const commands = await firstActivation(async (ctx) => {
       ctx.restartFresh({ n: 1 }, { timeout });
       return null;
-    })(new FakeEngine());
+    });
 
-    expect(answered.answer.outcome.oneofKind).toBe('protocolError');
-    expect(answered.error).toMatch(/restarted with a timeout/);
+    const restart = commands.find((c) => c.what.oneofKind === 'restartFresh')!.what as any;
+    expect(restart.restartFresh.executionTimeout).toEqual({ seconds: '90', nanos: 0 });
+  });
+
+  it('sends a restart without a timeout as none', async () => {
+    const commands = await firstActivation(async (ctx) => {
+      ctx.restartFresh({ n: 1 });
+      return null;
+    });
+
+    const restart = commands.find((c) => c.what.oneofKind === 'restartFresh')!.what as any;
+    expect(restart.restartFresh.executionTimeout).toBeUndefined();
   });
 
   it('sends a child timeout as a Duration', async () => {

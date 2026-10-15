@@ -186,7 +186,7 @@ export class Duration {
  */
 export interface RetryPolicy {
   /**
-   * Maximum number of retry attempts
+   * Maximum number of retry attempts. 0 retries without limit.
    */
   maxAttempts: number;
 
