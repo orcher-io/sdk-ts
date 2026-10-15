@@ -21,7 +21,7 @@
 import { TASK_FAILED_SENTINEL_KEY } from '../errors';
 import { toPayload } from '../core/bridge/payload';
 import { WorkflowCommandType, WorkflowContext, type ReachedStep } from '../workflow/context';
-import { ParentClosePolicy } from '../workflow/types';
+import { DEFAULT_MAX_ATTEMPTS, ParentClosePolicy } from '../workflow/types';
 import type { Duration } from '../core/generated/google/protobuf/duration';
 import type { Timestamp } from '../core/generated/google/protobuf/timestamp';
 import {
@@ -572,7 +572,7 @@ function payloadOf(payload: HandlerPayload | undefined): Payload {
 
 function retryPolicy(policy: any): RetryPolicy {
   return {
-    maxAttempts: policy.maxAttempts ?? policy.max_attempts ?? 3,
+    maxAttempts: policy.maxAttempts ?? policy.max_attempts ?? DEFAULT_MAX_ATTEMPTS,
     firstDelay: duration(policy.initialInterval ?? policy.initial_interval ?? 1000),
     maxDelay: duration(policy.maxInterval ?? policy.max_interval ?? 60000),
     delayMultiplier: policy.backoffCoefficient ?? policy.backoff_coefficient ?? 2.0,
