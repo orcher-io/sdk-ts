@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.8](https://github.com/orcher-io/sdk-ts/compare/v0.5.7...v0.5.8) (2026-10-15)
+
+
+### Features
+
+* build on sdk-core 0.15 and carry restart timeouts and terminated-child reasons ([#41](https://github.com/orcher-io/sdk-ts/issues/41)) ([0c81187](https://github.com/orcher-io/sdk-ts/commit/0c81187a57d18c5b0aff7dec9e93550549d30211))
+
+
+### Bug Fixes
+
+* read a workflow run's attempt as the engine numbers it ([#44](https://github.com/orcher-io/sdk-ts/issues/44)) ([18f4af0](https://github.com/orcher-io/sdk-ts/commit/18f4af0dfb083bf44eaf2053d5aaa202b6a95002))
+* send the default max attempts when a retry policy omits it ([#46](https://github.com/orcher-io/sdk-ts/issues/46)) ([1760822](https://github.com/orcher-io/sdk-ts/commit/176082207050bf7d9d46b70dbaea5f07d97c76bf))
+
 ## [0.5.7](https://github.com/orcher-io/sdk-ts/compare/v0.5.6...v0.5.7) (2026-10-14)
 
 
