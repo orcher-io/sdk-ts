@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.9](https://github.com/orcher-io/sdk-ts/compare/v0.5.8...v0.5.9) (2026-10-17)
+
+
+### Features
+
+* expose a task failure's error type and whether it was cancelled ([#47](https://github.com/orcher-io/sdk-ts/issues/47)) ([0d8b4ae](https://github.com/orcher-io/sdk-ts/commit/0d8b4aeb79b782d5f87691b34ee024abf95f7d65))
+
+
+### Bug Fixes
+
+* deliver a cancellation by the kernel's order of outcomes ([#45](https://github.com/orcher-io/sdk-ts/issues/45)) ([d33f115](https://github.com/orcher-io/sdk-ts/commit/d33f11550c0a5177b78865bbb659eaaed7a2d5bc))
+
 ## [0.5.8](https://github.com/orcher-io/sdk-ts/compare/v0.5.7...v0.5.8) (2026-10-15)
 
 
