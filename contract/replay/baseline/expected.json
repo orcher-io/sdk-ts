@@ -282,7 +282,8 @@
             }
           ],
           "task_queue": null,
-          "timeout": null
+          "timeout": null,
+          "retry_policy": null
         }
       }
     ],
@@ -2310,7 +2311,8 @@
             }
           ],
           "timeout": null,
-          "orphan_policy": "Cancel"
+          "orphan_policy": "Cancel",
+          "retry_policy": null
         }
       }
     ],
@@ -2601,7 +2603,8 @@
             }
           ],
           "timeout": null,
-          "orphan_policy": "Cancel"
+          "orphan_policy": "Cancel",
+          "retry_policy": null
         }
       }
     ],
@@ -3562,7 +3565,8 @@
             }
           ],
           "timeout": null,
-          "orphan_policy": "Cancel"
+          "orphan_policy": "Cancel",
+          "retry_policy": null
         }
       },
       {
@@ -3618,7 +3622,8 @@
             }
           ],
           "timeout": null,
-          "orphan_policy": "Cancel"
+          "orphan_policy": "Cancel",
+          "retry_policy": null
         }
       }
     ],
@@ -3688,7 +3693,8 @@
             }
           ],
           "timeout": null,
-          "orphan_policy": "Cancel"
+          "orphan_policy": "Cancel",
+          "retry_policy": null
         }
       }
     ],

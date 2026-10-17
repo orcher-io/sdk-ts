@@ -1,10 +1,11 @@
 /**
  * A request to cancel a workflow reaches its code once, at the right wait.
  *
- * The first wait whose result the journal did not record before the request
- * throws the cancellation; waits after it run normally, so cleanup is scheduled
- * and completes. Which wait is decided by the journal's recorded times, so a
- * replay delivers it at the same place as the original run.
+ * The first wait whose result does not come before the request throws the
+ * cancellation; waits after it run normally, so cleanup is scheduled and
+ * completes. Which wait is decided by the run's order of outcomes (the kernel's
+ * resolution sequence), never by recorded times, which tie within a
+ * millisecond, so a replay delivers it at the same place as the original run.
  */
 
 import { WorkflowContext } from '../context';
@@ -30,12 +31,13 @@ function replaying(): WorkflowContext {
   return new WorkflowContext(execution as any, true, '1.0.0', 0);
 }
 
-/** `work_0` completed at 1000 ms; the request came at 2000 ms. */
+/** `work_0` completed (the run's second outcome); then the request came (its
+ * third). */
 function askedToCancel(): WorkflowContext {
   const ctx = replaying();
   ctx.injectStepResult('work_0', 1);
-  ctx.recordResolvedAt({ work_0: 1_000 });
-  ctx.noteCancelRequested(2_000);
+  ctx.recordResolvedOrder({ work_0: 2 });
+  ctx.noteCancelRequested(3);
   return ctx;
 }
 
@@ -73,18 +75,45 @@ describe('cancellation requests', () => {
     // The interrupted step may have a result by now, recorded after the request.
     const ctx = askedToCancel();
     ctx.injectStepResult('work_1', 2);
-    ctx.recordResolvedAt({ work_1: 3_000 });
+    ctx.recordResolvedOrder({ work_1: 4 });
     await ctx.executeTask(work, 0);
 
     expect(isCancellation(await outcome(() => ctx.executeTask(work, 1)))).toBe(true);
   });
 
-  it('receives a result recorded with the request', async () => {
+  it('orders a result in the request\'s millisecond by sequence, not time', async () => {
+    const asked = (resultOrder: number, requestOrder: number) => {
+      const ctx = replaying();
+      ctx.injectStepResult('work_0', 1);
+      ctx.recordResolvedAt({ work_0: 2_000 });
+      ctx.recordResolvedOrder({ work_0: resultOrder });
+      ctx.noteCancelRequested(requestOrder);
+      return ctx;
+    };
+    const before = asked(2, 3);
+    expect(await before.executeTask(work, 0)).toBe(1);
+    expect(before.isCancelRequested()).toBe(false);
+
+    const after = asked(3, 2);
+    expect(isCancellation(await outcome(() => after.executeTask(work, 0)))).toBe(true);
+    // Cleanup runs.
+    expect(isSuspension(await outcome(() => after.executeTask(refund, 1)))).toBe(true);
+  });
+
+  it('receives a result with no known place', async () => {
     const ctx = replaying();
     ctx.injectStepResult('work_0', 1);
-    ctx.recordResolvedAt({ work_0: 2_000 });
-    ctx.noteCancelRequested(2_000);
+    ctx.noteCancelRequested(2);
     expect(await ctx.executeTask(work, 0)).toBe(1);
+  });
+
+  it('tells the run of the first request only', async () => {
+    const ctx = replaying();
+    ctx.injectStepResult('work_0', 1);
+    ctx.recordResolvedOrder({ work_0: 3 });
+    ctx.noteCancelRequested(2);
+    ctx.noteCancelRequested(4);
+    expect(isCancellation(await outcome(() => ctx.executeTask(work, 0)))).toBe(true);
   });
 
   it('cancels nothing without a request', async () => {
@@ -95,15 +124,22 @@ describe('cancellation requests', () => {
 
   it('tells a sleep whose timer had not fired', async () => {
     const ctx = replaying();
-    ctx.noteCancelRequested(2_000);
+    ctx.noteCancelRequested(2);
     expect(isCancellation(await outcome(() => ctx.sleep(Duration.fromMinutes(10))))).toBe(true);
   });
 
   it('receives an event recorded before the request, then tells the next wait', async () => {
     const ctx = replaying();
-    ctx.bufferEvent('go', 7, 0, 1_000);
-    ctx.noteCancelRequested(2_000);
+    ctx.bufferEvent('go', 7, 0, 1_000, 2);
+    ctx.noteCancelRequested(3);
     expect(await ctx.waitForEvent('go')).toBe(7);
+    expect(isCancellation(await outcome(() => ctx.waitForEvent('go')))).toBe(true);
+  });
+
+  it('tells a wait whose event came after the request', async () => {
+    const ctx = replaying();
+    ctx.bufferEvent('go', 7, 2, 2_000, 3);
+    ctx.noteCancelRequested(2);
     expect(isCancellation(await outcome(() => ctx.waitForEvent('go')))).toBe(true);
   });
 });

@@ -115,6 +115,7 @@ export class FakeEngine {
         stepId: '',
         at: at(startedMs),
         replaying: false,
+        sequence: '1',
         what: {
           oneofKind: 'started',
           started: {
@@ -131,7 +132,13 @@ export class FakeEngine {
     ];
     for (const entry of this.journal) {
       if (entry.resolution) {
-        resolutions.push({ ...entry.resolution, at: at(entry.atMs), replaying: false });
+        // Numbered in order, as the kernel numbers them.
+        resolutions.push({
+          ...entry.resolution,
+          at: at(entry.atMs),
+          replaying: false,
+          sequence: String(resolutions.length + 1),
+        });
       }
     }
     return {
