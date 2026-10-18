@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.10](https://github.com/orcher-io/sdk-ts/compare/v0.5.9...v0.5.10) (2026-10-18)
+
+
+### Features
+
+* let a child workflow and a restart-fresh set their retry policy ([#50](https://github.com/orcher-io/sdk-ts/issues/50)) ([b799d99](https://github.com/orcher-io/sdk-ts/commit/b799d99a5b0c85897b3910175f642977fb2dceac)), closes [#49](https://github.com/orcher-io/sdk-ts/issues/49)
+
 ## [0.5.9](https://github.com/orcher-io/sdk-ts/compare/v0.5.8...v0.5.9) (2026-10-17)
 
 
