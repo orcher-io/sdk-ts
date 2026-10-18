@@ -21,7 +21,11 @@
 import { TASK_FAILED_SENTINEL_KEY, type TaskFailureCode } from '../errors';
 import { toPayload } from '../core/bridge/payload';
 import { WorkflowCommandType, WorkflowContext, type ReachedStep } from '../workflow/context';
-import { DEFAULT_MAX_ATTEMPTS, ParentClosePolicy } from '../workflow/types';
+import {
+  DEFAULT_MAX_ATTEMPTS,
+  ParentClosePolicy,
+  type RetryPolicy as WorkflowRetryPolicy,
+} from '../workflow/types';
 import type { Duration } from '../core/generated/google/protobuf/duration';
 import type { Timestamp } from '../core/generated/google/protobuf/timestamp';
 // Messages are built with `create()`, so a field added to the protocol takes
@@ -533,6 +537,7 @@ function kernelCommand(command: any): Command {
           executionTimeout:
             typeof command.timeout === 'number' ? duration(command.timeout) : undefined,
           orphanPolicy: orphanPolicy(command.parentClosePolicy),
+          retryPolicy: command.retryPolicy ? workflowRetryPolicy(command.retryPolicy) : undefined,
         }),
       });
     case WorkflowCommandType.CANCEL_CHILD_WORKFLOW:
@@ -599,6 +604,7 @@ function kernelCommand(command: any): Command {
           input: inputPayloads(command.input),
           executionTimeout:
             typeof command.timeout === 'number' ? duration(command.timeout) : undefined,
+          retryPolicy: command.retryPolicy ? workflowRetryPolicy(command.retryPolicy) : undefined,
         }),
       });
     default:
@@ -647,6 +653,23 @@ function retryPolicy(policy: any): RetryPolicy {
       policy.nonRetryableErrors ??
       policy.non_retryable_errors ??
       [],
+  });
+}
+
+/**
+ * A child's or a restart-fresh's retry policy, sent as a workflow start sends
+ * one: an omitted count is the default of 3 and 0 is unlimited, intervals are
+ * milliseconds and an omitted one is left to the engine, and an omitted
+ * backoff coefficient is 2.
+ */
+function workflowRetryPolicy(policy: Partial<WorkflowRetryPolicy>): RetryPolicy {
+  return RetryPolicy.create({
+    maxAttempts: policy.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
+    firstDelay:
+      typeof policy.initialInterval === 'number' ? duration(policy.initialInterval) : undefined,
+    maxDelay: typeof policy.maxInterval === 'number' ? duration(policy.maxInterval) : undefined,
+    delayMultiplier: policy.backoffCoefficient ?? 2.0,
+    neverRetryTypes: policy.nonRetryableErrorTypes ?? [],
   });
 }
 

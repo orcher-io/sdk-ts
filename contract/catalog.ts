@@ -236,6 +236,37 @@ export const failingChild = workflow<unknown, unknown>({
   },
 });
 
+/**
+ * A child workflow that fails on its first run and succeeds on any later one,
+ * reporting the attempt it ran as.
+ */
+export const failsFirstRun = workflow<unknown, unknown>({
+  name: 'fails_first_run',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    if (ctx.attempt() === 1) {
+      throw new Error('intentional failure of the first run');
+    }
+    return { attempt: ctx.attempt() };
+  },
+});
+
+/**
+ * Starts a child workflow with a retry policy of two attempts. The child's
+ * first run fails and the engine retries it; the parent receives the second
+ * run's success.
+ */
+export const parentRetriesChild = workflow<unknown, unknown>({
+  name: 'parent_retries_child',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    const out = await ctx.executeChildWorkflow<{ attempt: number }>(
+      'fails_first_run',
+      {},
+      { retryPolicy: { maxAttempts: 2, initialInterval: 1_000 } }
+    );
+    return { child_succeeded: true, child_attempt: out.attempt };
+  },
+});
+
 /** Starts a failing child, catches the child failure, and reports it. */
 export const parentCatchesChildFailure = workflow<unknown, unknown>({
   name: 'parent_catches_child_failure',

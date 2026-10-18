@@ -154,6 +154,8 @@ export interface StartChildWorkflowCommand extends WorkflowCommand {
   /** Execution timeout, in milliseconds */
   timeout?: number;
   parentClosePolicy?: ParentClosePolicy;
+  /** How the child is retried; unset sends no policy */
+  retryPolicy?: Partial<RetryPolicy>;
 }
 
 /**
@@ -209,6 +211,14 @@ export interface ChildWorkflowOptions {
   timeout?: Duration;
   /** Policy for what happens to child when parent closes */
   parentClosePolicy?: ParentClosePolicy;
+  /**
+   * How the child is retried when a run of it fails, with the same meaning as
+   * a workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
+   * retries without limit, and leaving it out allows 3. Intervals are in
+   * milliseconds. When unset, no policy is sent: a failed child is not
+   * retried and its failure reaches the parent.
+   */
+  retryPolicy?: Partial<RetryPolicy>;
 }
 
 /**
@@ -227,6 +237,8 @@ export interface RestartFreshCommand extends WorkflowCommand {
   taskQueue?: string;
   /** New execution timeout, in milliseconds */
   timeout?: number;
+  /** Retry policy for the new execution; unset keeps the current one */
+  retryPolicy?: Partial<RetryPolicy>;
 }
 
 /**
@@ -262,6 +274,15 @@ export interface RestartFreshOptions {
    * or a number of milliseconds.
    */
   timeout?: DurationInput;
+
+  /**
+   * Retry policy for the new execution (optional), with the same meaning as a
+   * workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
+   * retries without limit, and leaving it out allows 3. Intervals are in
+   * milliseconds. When unset, no policy is sent and the new execution keeps
+   * the current one.
+   */
+  retryPolicy?: Partial<RetryPolicy>;
 }
 
 /**
@@ -1017,6 +1038,7 @@ export class WorkflowContext {
         input,
         timeout: options?.timeout?.toMilliseconds(),
         parentClosePolicy,
+        retryPolicy: options?.retryPolicy,
       };
       this.addCommand(command);
     }
@@ -1125,6 +1147,7 @@ export class WorkflowContext {
         input,
         timeout: options?.timeout?.toMilliseconds(),
         parentClosePolicy,
+        retryPolicy: options?.retryPolicy,
       };
       this.addCommand(command);
     }
@@ -1256,6 +1279,7 @@ export class WorkflowContext {
       input,
       taskQueue: options?.taskQueue,
       timeout: options?.timeout === undefined ? undefined : durationToMillis(options.timeout),
+      retryPolicy: options?.retryPolicy,
     };
 
     this.addCommand(command);
