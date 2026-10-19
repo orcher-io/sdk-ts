@@ -364,7 +364,10 @@ export function failureCodeName(code: FailureCode, end: End = End.UNSPECIFIED): 
 
 /**
  * The answer to an activation: what the workflow's code produced, as the
- * kernel protocol's commands, with the queries and updates answered.
+ * kernel protocol's commands, with the queries and updates answered. A
+ * failure carries the calls the code made before it, which the kernel checks
+ * against history and never sends; an outcome with no `reached` (no code ran)
+ * leaves the failure unchecked.
  */
 export function answerActivation(
   activationId: Uint8Array,
@@ -380,6 +383,7 @@ export function answerActivation(
   if (!outcome.success) {
     return RunActivationResult.create({
       ...answered,
+      callsBeforeFailure: callsBeforeFailure(outcome),
       outcome: {
         oneofKind: 'workflowFailed',
         workflowFailed: failure({
@@ -406,6 +410,25 @@ export function answerActivation(
   } catch (error) {
     if (error instanceof ProtocolRefusal) {
       return protocolError(activationId, error.message);
+    }
+    throw error;
+  }
+}
+
+/**
+ * The calls a failing workflow's code made before it failed, as `commands`
+ * carries them. A call the protocol cannot carry leaves the failure
+ * unchecked, rather than its calls reported wrong.
+ */
+function callsBeforeFailure(outcome: ActivationOutcome): Commands | undefined {
+  if (outcome.reached === undefined) {
+    return undefined;
+  }
+  try {
+    return Commands.create({ commands: kernelCommands(outcome.commands ?? [], outcome.reached) });
+  } catch (error) {
+    if (error instanceof ProtocolRefusal) {
+      return undefined;
     }
     throw error;
   }

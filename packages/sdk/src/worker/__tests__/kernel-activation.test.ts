@@ -408,6 +408,50 @@ describe('a kernel activation', () => {
     const answer = await (worker as any).runActivation(activationOf('unknown', []));
     expect(answer.outcome.oneofKind).toBe('workflowFailed');
     expect(answer.outcome.workflowFailed.message).toBe('Workflow not registered: unknown');
+    // No code ran, so there are no calls to check against history.
+    expect(answer.callsBeforeFailure).toBeUndefined();
+  });
+
+  it('sends the calls a failing workflow made before it failed, beside the failure', async () => {
+    const worker = workerWith('short', async (ctx, input) => {
+      await ctx.executeTask(taskRef('charge'), input);
+      await ctx.execute('note', async () => 1);
+      throw new Error('no stock');
+    });
+    const answer = await (worker as any).runActivation(
+      activationOf('short', [settled('charge_0', 'charged', 2_000)])
+    );
+    expect(answer.outcome.oneofKind).toBe('workflowFailed');
+    expect(answer.outcome.workflowFailed.message).toContain('no stock');
+    // Laid out as kernelCommands lays out a completing activation's calls.
+    expect(calls(answer.callsBeforeFailure.commands)).toEqual([
+      [false, 'recordValue', 'note_1'],
+      [true, 'runTask', 'charge_0'],
+    ]);
+  });
+
+  it('says a workflow that failed before any call made none', async () => {
+    const worker = workerWith('boom', async () => {
+      throw new Error('no stock');
+    });
+    const answer = await (worker as any).runActivation(activationOf('boom', []));
+    expect(answer.callsBeforeFailure).toEqual({ commands: [] });
+  });
+
+  it('leaves a failure unchecked when its calls cannot be carried', () => {
+    const answer = answerActivation(
+      new Uint8Array([9]),
+      {
+        success: false,
+        error: { message: 'no stock' },
+        commands: [{ type: 'NO_SUCH' }],
+        reached: [],
+      },
+      [],
+      []
+    );
+    expect(answer.outcome.oneofKind).toBe('workflowFailed');
+    expect(answer.callsBeforeFailure).toBeUndefined();
   });
 });
 

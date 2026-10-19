@@ -223,7 +223,8 @@
       "details": null,
       "retryable": true
     },
-    "restart_fresh": null
+    "restart_fresh": null,
+    "reached_steps": []
   },
   "31b322cc-84af-42b0-b1a9-6a1a83fa7a94/c356cc1b-9557-4bec-9b7e-00569d74fe79/0179176196789764100000000038-activation.pb": {
     "run_id": "c356cc1b-9557-4bec-9b7e-00569d74fe79",
@@ -796,7 +797,8 @@
       "details": null,
       "retryable": true
     },
-    "restart_fresh": null
+    "restart_fresh": null,
+    "reached_steps": []
   },
   "4a7e730d-9306-45e0-bbb6-6a416ba25a00/dffd73bf-b484-405f-a196-8d1726ee6dba/0179176197096483500000000052-activation.pb": {
     "run_id": "dffd73bf-b484-405f-a196-8d1726ee6dba",

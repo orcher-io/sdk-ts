@@ -689,7 +689,8 @@ export interface RunActivationResult {
     } | {
         oneofKind: "workflowFailed";
         /**
-         * The run's code failed. The kernel reports it as the run's failure.
+         * The run's code failed. The kernel reports it as the run's failure,
+         * once `calls_before_failure` replays the run's history.
          *
          * @generated from protobuf field: orcher.kernel.v1.Failure workflow_failed = 3
          */
@@ -720,6 +721,20 @@ export interface RunActivationResult {
      * @generated from protobuf field: repeated orcher.kernel.v1.UpdateAnswer updates = 6
      */
     updates: UpdateAnswer[];
+    /**
+     * With `workflow_failed`: every durable call the run's code made before it
+     * failed, in issue order, as `commands` carries them for code that did not
+     * fail. The kernel holds them to history as it holds `commands`, so code
+     * that fails after leaving a recorded step behind no longer replays its
+     * history, and the run is held rather than failed; none of them is sent on.
+     * Set, though empty, when the code failed before making any call. Unset
+     * when the SDK cannot say what calls the code made (or predates this
+     * field): the failure is then not checked against history. Ignored with
+     * any other outcome.
+     *
+     * @generated from protobuf field: orcher.kernel.v1.Commands calls_before_failure = 7
+     */
+    callsBeforeFailure?: Commands;
 }
 /**
  * Commands are every durable call the run's code made in an activation.
@@ -2941,7 +2956,8 @@ class RunActivationResult$Type extends MessageType<RunActivationResult> {
             { no: 3, name: "workflow_failed", kind: "message", oneof: "outcome", T: () => Failure },
             { no: 4, name: "protocol_error", kind: "message", oneof: "outcome", T: () => ProtocolError },
             { no: 5, name: "queries", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => QueryAnswer },
-            { no: 6, name: "updates", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => UpdateAnswer }
+            { no: 6, name: "updates", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => UpdateAnswer },
+            { no: 7, name: "calls_before_failure", kind: "message", T: () => Commands }
         ]);
     }
     override create(value?: PartialMessage<RunActivationResult>): RunActivationResult {
@@ -2986,6 +3002,9 @@ class RunActivationResult$Type extends MessageType<RunActivationResult> {
                 case /* repeated orcher.kernel.v1.UpdateAnswer updates */ 6:
                     message.updates.push(UpdateAnswer.internalBinaryRead(reader, reader.uint32(), options));
                     break;
+                case /* orcher.kernel.v1.Commands calls_before_failure */ 7:
+                    message.callsBeforeFailure = Commands.internalBinaryRead(reader, reader.uint32(), options, message.callsBeforeFailure);
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -3016,6 +3035,9 @@ class RunActivationResult$Type extends MessageType<RunActivationResult> {
         /* repeated orcher.kernel.v1.UpdateAnswer updates = 6; */
         for (let i = 0; i < message.updates.length; i++)
             UpdateAnswer.internalBinaryWrite(message.updates[i], writer.tag(6, WireType.LengthDelimited).fork(), options).join();
+        /* orcher.kernel.v1.Commands calls_before_failure = 7; */
+        if (message.callsBeforeFailure)
+            Commands.internalBinaryWrite(message.callsBeforeFailure, writer.tag(7, WireType.LengthDelimited).fork(), options).join();
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
