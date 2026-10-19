@@ -422,12 +422,16 @@ export class WorkflowExecutor {
       this.logger.info(
         `[WF-EXEC] About to return failure ExecutionResult for ${request.executionId}`
       );
+      // None of the commands issued before the failure is sent; they go with
+      // the failure, for the kernel to check against history.
+      const failedCommands = context.takeCommands();
       const failedReached = context.takeReached();
       const failureResult = {
         executionId: request.executionId,
         success: false,
         error: this.serializeError(error, request),
         duration,
+        commands: failedCommands,
         reachedSteps: failedReached.map((step) => step.id),
         reached: failedReached,
         context, // Exposed for query and update handler dispatch
