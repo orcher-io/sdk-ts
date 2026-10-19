@@ -221,7 +221,7 @@
       "message": "Workflow handler threw an error: intentional child failure",
       "error_type": "WorkflowCode",
       "details": null,
-      "retryable": false
+      "retryable": true
     },
     "restart_fresh": null
   },
@@ -794,7 +794,7 @@
       "message": "deliberate contract failure",
       "error_type": "WorkflowCode",
       "details": null,
-      "retryable": false
+      "retryable": true
     },
     "restart_fresh": null
   },

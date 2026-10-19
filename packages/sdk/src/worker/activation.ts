@@ -108,7 +108,12 @@ export type HandlerUpdateResponse = {
 /** What running the workflow's code produced, as the executor reports it. */
 export interface ActivationOutcome {
   success: boolean;
-  error?: { message?: string; type?: string };
+  /**
+   * Why the run failed. `nonRetryable` when the workflow code raised it as
+   * non-retryable, the way task code does; any other failure is retried as
+   * the workflow's retry policy says.
+   */
+  error?: { message?: string; type?: string; nonRetryable?: boolean };
   commands?: any[];
   reached?: ReachedStep[];
 }
@@ -379,7 +384,7 @@ export function answerActivation(
         oneofKind: 'workflowFailed',
         workflowFailed: failure({
           message: outcome.error?.message || 'Unknown error',
-          nonRetryable: true,
+          nonRetryable: outcome.error?.nonRetryable === true,
           code:
             outcome.error?.type === 'NonDeterminism'
               ? FailureCode.NON_DETERMINISM

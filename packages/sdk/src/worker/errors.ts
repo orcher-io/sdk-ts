@@ -284,6 +284,23 @@ export function isHandlerNotFoundError(error: unknown): error is HandlerNotFound
 }
 
 /**
+ * Whether code raised `error` as non-retryable: a truthy `nonRetryable`
+ * property on the error, or on the error an `ExecutionError` wraps. The same
+ * mark for a task and for a workflow; either is then not retried, whatever
+ * its retry policy allows.
+ *
+ * @internal
+ */
+export function raisedAsNonRetryable(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const raised =
+    error instanceof ExecutionError && error.cause instanceof Error ? error.cause : error;
+  return Boolean((raised as { nonRetryable?: unknown }).nonRetryable);
+}
+
+/**
  * What a failed task reports to the engine about its error.
  *
  * The engine decides a retry from the failure type it is told, and a retry
@@ -312,6 +329,6 @@ export function describeTaskFailure(error: unknown): {
   return {
     message: error.message,
     type: named ?? raised.constructor?.name ?? 'Error',
-    nonRetryable: Boolean((raised as { nonRetryable?: unknown }).nonRetryable),
+    nonRetryable: raisedAsNonRetryable(error),
   };
 }

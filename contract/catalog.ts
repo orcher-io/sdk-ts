@@ -269,6 +269,57 @@ export const parentRetriesChild = workflow<unknown, unknown>({
   },
 });
 
+/** A workflow failure raised as non-retryable, as task code raises one. */
+class OutOfStock extends Error {
+  readonly nonRetryable = true;
+}
+
+/**
+ * A child workflow that throws a non-retryable error on its first run and
+ * succeeds on any later one, so a retry would show as a success.
+ */
+export const nonRetryableFirstRun = workflow<unknown, unknown>({
+  name: 'non_retryable_first_run',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    if (ctx.attempt() === 1) {
+      throw new OutOfStock('out of stock, for good');
+    }
+    return { attempt: ctx.attempt() };
+  },
+});
+
+/**
+ * Starts two child workflows, each with a retry policy of two attempts and
+ * each failing its first run: one throwing a non-retryable error, which is
+ * not retried and fails, and one throwing a plain error, which is retried and
+ * succeeds on its second run.
+ */
+export const parentNonRetryableChild = workflow<unknown, unknown>({
+  name: 'parent_non_retryable_child',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    const options = () => ({ retryPolicy: { maxAttempts: 2, initialInterval: 1_000 } });
+    let nonRetryableChildFailed = false;
+    try {
+      await ctx.executeChildWorkflow('non_retryable_first_run', {}, options());
+    } catch (e) {
+      // The parent pausing on the child is not the child's failure.
+      if ((e as { code?: string })?.code === 'WORKFLOW_SUSPENDED') {
+        throw e;
+      }
+      nonRetryableChildFailed = true;
+    }
+    const plain = await ctx.executeChildWorkflow<{ attempt: number }>(
+      'fails_first_run',
+      {},
+      options()
+    );
+    return {
+      non_retryable_child_failed: nonRetryableChildFailed,
+      plain_child_attempt: plain.attempt,
+    };
+  },
+});
+
 /** Starts a failing child, catches the child failure, and reports it. */
 export const parentCatchesChildFailure = workflow<unknown, unknown>({
   name: 'parent_catches_child_failure',
