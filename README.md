@@ -265,6 +265,11 @@ export class PaymentTasks {
 Any other error is retried. Set `name` in the constructor if your build
 minifies class names.
 
+A workflow is marked the same way: an error with a truthy `nonRetryable`
+thrown from workflow code fails the workflow without a retry, whatever its
+retry policy allows. Any other error a workflow throws is retried as its
+policy says.
+
 A workflow that catches the failure reads its type and whether the task was
 cancelled from the `WorkflowError`:
 

@@ -7,7 +7,7 @@
 import type { WorkflowDefinition } from './types';
 import { WorkflowContext, WorkflowCommandType } from '../workflow/context';
 import type { ExecutionRequest, ExecutionResult, Logger } from './types';
-import { ExecutionError, ExecutionTimeoutError } from './errors';
+import { ExecutionError, ExecutionTimeoutError, raisedAsNonRetryable } from './errors';
 import { WorkflowError, ErrorCode } from '../errors';
 
 /**
@@ -680,6 +680,9 @@ export class WorkflowExecutor {
             : 'Error',
       stack: error instanceof Error ? error.stack : undefined,
       cause: error instanceof Error ? error.cause : undefined,
+      // Raised as non-retryable the way task code raises it: the workflow is
+      // then not retried, whatever its retry policy allows.
+      nonRetryable: raisedAsNonRetryable(error),
     };
 
     if (error instanceof ExecutionError) {

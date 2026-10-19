@@ -385,7 +385,22 @@ describe('a kernel activation', () => {
     const answer = await (worker as any).runActivation(activationOf('boom', []));
     expect(answer.outcome.oneofKind).toBe('workflowFailed');
     expect(answer.outcome.workflowFailed.message).toContain('no stock');
-    expect(answer.outcome.workflowFailed.nonRetryable).toBe(true);
+    expect(answer.outcome.workflowFailed.nonRetryable).toBe(false);
+  });
+
+  it('marks a workflow failure non-retryable only when the code raised it so', async () => {
+    class OutOfStock extends Error {
+      readonly nonRetryable = true;
+    }
+    const marked = Object.assign(new Error('this one only'), { nonRetryable: true });
+    for (const raised of [new OutOfStock('out of stock'), marked]) {
+      const worker = workerWith('gives-up', async () => {
+        throw raised;
+      });
+      const answer = await (worker as any).runActivation(activationOf('gives-up', []));
+      expect(answer.outcome.oneofKind).toBe('workflowFailed');
+      expect(answer.outcome.workflowFailed.nonRetryable).toBe(true);
+    }
   });
 
   it('answers a workflow it does not know with a workflow failure', async () => {
