@@ -47,7 +47,7 @@ export {
 } from './child-handle';
 
 // Saga pattern
-export { Saga, SagaBuilder } from './saga';
+export { Saga, SagaBuilder, SagaCompensationError } from './saga';
 
 // Session management
 export { SessionContext, SessionState, buildSessionQueue, isSessionQueue } from './session';

@@ -16,7 +16,8 @@ The Python and Rust SDKs carry equivalent checks.
 - `scenarios.json`: the shared contract, kept byte-identical across the SDKs.
   Each scenario names a catalog workflow, an `input`, and the `expect`ed terminal
   `status` and returned `result`. Matching is structural: a scenario asserts only
-  the fields it lists, so SDK-specific extras are ignored.
+  the fields it lists, so SDK-specific extras are ignored. A scenario with
+  `result_exact` set asserts the whole result instead.
 - `catalog.ts`: the shared workflow and task catalog this worker serves (the
   functional `task()` / `workflow()` API). Each workflow returns a JSON result
   describing the durable behavior it observed.

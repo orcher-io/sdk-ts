@@ -11,6 +11,12 @@ import { ExecutionError, ExecutionTimeoutError } from './errors';
 import { WorkflowError, ErrorCode } from '../errors';
 
 /**
+ * A value whose JSON is `null`, for a workflow result of null: `toPayload`
+ * makes an empty payload of null itself.
+ */
+const JSON_NULL = { toJSON: () => null };
+
+/**
  * Workflow executor configuration
  */
 export interface WorkflowExecutorOptions {
@@ -649,7 +655,11 @@ export class WorkflowExecutor {
    */
   private serializeOutput(result: any): any {
     const { toPayload } = require('../core/bridge/payload');
-    return toPayload(result);
+    // A workflow that returns null, or nothing, completes with the JSON
+    // `null`, as in the other SDKs. The empty payload `toPayload` makes of
+    // null reached the engine as a run with no result at all, and a caller
+    // waiting on it was told the result was missing.
+    return toPayload(result === undefined || result === null ? JSON_NULL : result);
   }
 
   /**
