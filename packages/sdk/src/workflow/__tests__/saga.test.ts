@@ -1,4 +1,4 @@
-import { Saga } from '../saga';
+import { Saga, SagaCompensationError } from '../saga';
 import { WorkflowError, ErrorCode, isWorkflowSuspension } from '../../errors';
 
 describe('Saga (imperative, converged shape)', () => {
@@ -114,6 +114,47 @@ describe('Saga (imperative, converged shape)', () => {
     await saga.addStep(act('A'), comp('A'));
     await expect(saga.compensate()).resolves.toBe(1);
     await expect(saga.compensate()).resolves.toBe(0);
+  });
+
+  it('a failed compensation does not stop the rest, and the step failure is kept', async () => {
+    const saga = new Saga();
+    const failingComp = (tag: string) => async () => {
+      log.push(`undo:${tag}`);
+      throw new Error(`${tag}-undo-failed`);
+    };
+    let caught: unknown;
+    try {
+      await saga.addStep(act('A'), comp('A'), { name: 'undo_a' });
+      await saga.addStep(act('B'), failingComp('B'), { name: 'undo_b' });
+      await saga.addStep(act('C', true), comp('C'));
+    } catch (err) {
+      caught = err;
+    }
+    expect(log).toEqual(['do:A', 'do:B', 'undo:B', 'undo:A']);
+    expect(caught).toBeInstanceOf(SagaCompensationError);
+    const err = caught as SagaCompensationError;
+    expect(err).toBeInstanceOf(WorkflowError);
+    expect(err.failed).toEqual(['undo_b']);
+    expect(err.reason).toBe('B-undo-failed');
+    expect((err.stepFailure as Error).message).toBe('C-failed');
+    expect(err.message).toContain('C-failed');
+  });
+
+  it('compensate() throws once every compensation has run, if one failed', async () => {
+    const saga = new Saga();
+    await saga.addStep(act('A'), comp('A'), { name: 'undo_a' });
+    saga.addCompensation(
+      async () => {
+        log.push('undo:B');
+        throw new Error('B-undo-failed');
+      },
+      { name: 'undo_b' }
+    );
+    await expect(saga.compensate()).rejects.toMatchObject({
+      failed: ['undo_b'],
+      stepFailure: undefined,
+    });
+    expect(log).toEqual(['do:A', 'undo:B', 'undo:A']);
   });
 
   it('SagaBuilder is an alias of Saga', () => {

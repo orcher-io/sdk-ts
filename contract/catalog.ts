@@ -12,8 +12,10 @@ import {
   ExecutionErrorCode,
   Operation,
   Saga,
+  SagaCompensationError,
   WorkflowError,
   isWorkflowCancellation,
+  isWorkflowSuspension,
   task,
   workflow,
   type ActorContext,
@@ -772,5 +774,266 @@ export const taskTimeoutTerminal = workflow<unknown, unknown>({
       };
     }
     return { caught: false, task_type: '', timed_out: false };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// A saga's failed compensation reaches the workflow.
+// ---------------------------------------------------------------------------
+
+/** The compensations that ran, by workflow, in the order they ran. Kept by the
+ * compensation tasks themselves, which run once each: a task is not run again
+ * on replay. */
+const sagaRan = new Map<string, string[]>();
+
+function recordCompensation(key: string, name: string): void {
+  sagaRan.set(key, [...(sagaRan.get(key) ?? []), name]);
+}
+
+type SagaInput = { key: string };
+
+export const sagaReserve = task<SagaInput, string>({
+  name: 'saga_reserve',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<string> => 'reserved',
+});
+
+export const sagaCharge = task<SagaInput, string>({
+  name: 'saga_charge',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<string> => 'charged',
+});
+
+/** The step that fails, so the saga compensates. */
+export const sagaShip = task<SagaInput, string>({
+  name: 'saga_ship',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (): Promise<string> => {
+    throw new Error('the carrier refused the parcel');
+  },
+});
+
+/** Undoes `saga_reserve`, and succeeds. */
+export const sagaRelease = task<SagaInput, string>({
+  name: 'saga_release',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (_ctx: TaskContext, input: SagaInput): Promise<string> => {
+    recordCompensation(input.key, 'saga_release');
+    return 'released';
+  },
+});
+
+/** Undoes `saga_charge`, and fails. */
+export const sagaRefund = task<SagaInput, string>({
+  name: 'saga_refund',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (_ctx: TaskContext, input: SagaInput): Promise<string> => {
+    recordCompensation(input.key, 'saga_refund');
+    throw new Error('the refund was declined');
+  },
+});
+
+/** Reports the compensations that ran for a workflow. */
+export const sagaCompensationsRan = task<SagaInput, string[]>({
+  name: 'saga_compensations_ran',
+  retryPolicy: { maxAttempts: 1 },
+  execute: async (_ctx: TaskContext, input: SagaInput): Promise<string[]> => [
+    ...(sagaRan.get(input.key) ?? []),
+  ],
+});
+
+/** Runs the two steps both saga workflows start with. */
+async function sagaTwoSteps(ctx: WorkflowContext, saga: Saga, input: SagaInput): Promise<void> {
+  await saga.addStep(
+    () => ctx.executeTask(sagaReserve, input),
+    () => ctx.executeTask(sagaRelease, input),
+    { name: 'saga_release' }
+  );
+  await saga.addStep(
+    () => ctx.executeTask(sagaCharge, input),
+    () => ctx.executeTask(sagaRefund, input),
+    { name: 'saga_refund' }
+  );
+}
+
+/** Completes two steps with compensations, then runs a step that fails, and
+ * reports the failure the saga threw and the compensations that ran. */
+export const sagaStepFailure = workflow<unknown, unknown>({
+  name: 'saga_step_failure',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    const input = { key: ctx.workflowId() };
+    const saga = new Saga();
+    await sagaTwoSteps(ctx, saga, input);
+    let compensationFailed = false;
+    let failedCompensations = 0;
+    let stepFailureKept = false;
+    try {
+      await saga.addStep(() => ctx.executeTask(sagaShip, input));
+    } catch (e) {
+      if (isWorkflowSuspension(e)) throw e;
+      if (e instanceof SagaCompensationError) {
+        compensationFailed = true;
+        failedCompensations = e.failed.length;
+        stepFailureKept = String(e.stepFailure).includes('the carrier refused the parcel');
+      } else {
+        stepFailureKept = String(e).includes('the carrier refused the parcel');
+      }
+    }
+    const ran = await ctx.executeTask(sagaCompensationsRan, input);
+    return {
+      compensation_failed: compensationFailed,
+      failed_compensations: failedCompensations,
+      step_failure_kept: stepFailureKept,
+      compensations_ran: ran,
+    };
+  },
+});
+
+/** Completes two steps with compensations, then compensates the saga itself,
+ * and reports what compensating threw and the compensations that ran. */
+export const sagaCompensateFailure = workflow<unknown, unknown>({
+  name: 'saga_compensate_failure',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    const input = { key: ctx.workflowId() };
+    const saga = new Saga();
+    await sagaTwoSteps(ctx, saga, input);
+    let compensationFailed = false;
+    let failedCompensations = 0;
+    try {
+      await saga.compensate();
+    } catch (e) {
+      if (!(e instanceof SagaCompensationError)) throw e;
+      compensationFailed = true;
+      failedCompensations = e.failed.length;
+    }
+    const ran = await ctx.executeTask(sagaCompensationsRan, input);
+    return {
+      compensation_failed: compensationFailed,
+      failed_compensations: failedCompensations,
+      compensations_ran: ran,
+    };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// A child workflow named differently on replay is held, not started again.
+// ---------------------------------------------------------------------------
+
+/** Runs of `counted_child`, by key. */
+export const childRuns = new Map<string, number>();
+
+/** A child workflow that counts its runs. */
+export const countedChild = workflow<{ key: string }, unknown>({
+  name: 'counted_child',
+  run: async (_ctx: WorkflowContext, input: { key: string }): Promise<unknown> => {
+    childRuns.set(input.key, (childRuns.get(input.key) ?? 0) + 1);
+    return { ran: true };
+  },
+});
+
+/** Names its child after how many times this worker process has run it, which
+ * differs on every replay: deliberately not deterministic. */
+export const childIdChangesOnReplay = workflow<{ key: string }, unknown>({
+  name: 'child_id_changes_on_replay',
+  run: async (ctx: WorkflowContext, input: { key: string }): Promise<unknown> => {
+    const n = recordActivation(input.key);
+    const child = await ctx.executeChildWorkflow(
+      'counted_child',
+      { key: input.key },
+      { workflowId: `${input.key}-child-${n}` }
+    );
+    return { child };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Falsy values, list inputs and several arguments arrive exactly.
+// ---------------------------------------------------------------------------
+
+const FALSY_KINDS = ['zero', 'false', 'empty_string', 'null', 'empty_list', 'empty_object'];
+
+function falsy(kind: string): unknown {
+  switch (kind) {
+    case 'zero':
+      return 0;
+    case 'false':
+      return false;
+    case 'empty_string':
+      return '';
+    case 'null':
+      return null;
+    case 'empty_list':
+      return [];
+    case 'empty_object':
+      return {};
+    default:
+      throw new Error(`no falsy value is named '${kind}'`);
+  }
+}
+
+/** Returns the falsy value its input names. */
+export const falsyValue = task<{ kind: string }, unknown>({
+  name: 'falsy_value',
+  execute: async (_ctx: TaskContext, input: { kind: string }): Promise<unknown> =>
+    falsy(input.kind),
+});
+
+/** Asks a task for each falsy value and returns what came back, in order. */
+export const falsyTaskResults = workflow<unknown, unknown>({
+  name: 'falsy_task_results',
+  run: async (ctx: WorkflowContext): Promise<unknown> => {
+    const values: unknown[] = [];
+    for (const kind of FALSY_KINDS) {
+      values.push(await ctx.executeTask(falsyValue, { kind }));
+    }
+    return { values };
+  },
+});
+
+/** Returns the falsy value its input names as its whole result. */
+export const falsyResult = workflow<{ kind: string }, unknown>({
+  name: 'falsy_result',
+  run: async (_ctx: WorkflowContext, input: { kind: string }): Promise<unknown> =>
+    falsy(input.kind),
+});
+
+/** Takes a list as its one input and returns it. */
+export const listTask = task<unknown[], unknown[]>({
+  name: 'list_task',
+  execute: async (_ctx: TaskContext, items: unknown[]): Promise<unknown[]> => items,
+});
+
+/** Takes a list as its one input, passes it to a task that takes a list, and
+ * reports what each received. */
+export const listInput = workflow<unknown[], unknown>({
+  name: 'list_input',
+  run: async (ctx: WorkflowContext, items: unknown[]): Promise<unknown> => {
+    const taskReceived = await ctx.executeTask(listTask, items);
+    return { workflow_received: items, task_received: taskReceived };
+  },
+});
+
+type SeveralArguments = { name: string; count: number; tags: string[]; gift: boolean };
+
+/** Takes several values as a tuple, which travels as a list, and reports them
+ * by name. */
+export const severalArgumentsTask = task<[string, number, string[], boolean], SeveralArguments>({
+  name: 'several_arguments_task',
+  execute: async (
+    _ctx: TaskContext,
+    [name, count, tags, gift]: [string, number, string[], boolean]
+  ): Promise<SeveralArguments> => ({ name, count, tags, gift }),
+});
+
+/** Takes several arguments by name, passes them on to a task that takes
+ * several values, and reports what each received. */
+export const severalArguments = workflow<SeveralArguments, unknown>({
+  name: 'several_arguments',
+  run: async (
+    ctx: WorkflowContext,
+    { name, count, tags, gift }: SeveralArguments
+  ): Promise<unknown> => {
+    const taskReceived = await ctx.executeTask(severalArgumentsTask, [name, count, tags, gift]);
+    return { workflow_received: { name, count, tags, gift }, task_received: taskReceived };
   },
 });

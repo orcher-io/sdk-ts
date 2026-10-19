@@ -97,7 +97,7 @@ export { QueryManager, QueryHelpers, QueryError } from './workflow/query';
 export type { QueryHandler, QueryResult } from './workflow/query';
 
 // Saga pattern
-export { Saga, SagaBuilder } from './workflow/saga';
+export { Saga, SagaBuilder, SagaCompensationError } from './workflow/saga';
 
 // Common workflow types
 export { Duration, ParentClosePolicy, QueryRejectCondition } from './workflow/types';

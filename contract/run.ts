@@ -71,6 +71,24 @@ import {
   cleanupRan,
   exitIfWorkerDoomedOnce,
   taskTimeoutTerminal,
+  sagaReserve,
+  sagaCharge,
+  sagaShip,
+  sagaRelease,
+  sagaRefund,
+  sagaCompensationsRan,
+  sagaStepFailure,
+  sagaCompensateFailure,
+  countedChild,
+  childIdChangesOnReplay,
+  childRuns,
+  falsyValue,
+  falsyTaskResults,
+  falsyResult,
+  listTask,
+  listInput,
+  severalArgumentsTask,
+  severalArguments,
 } from './catalog';
 import { execSync, spawn, type ChildProcess } from 'child_process';
 
@@ -90,6 +108,21 @@ function jsonMatches(expected: unknown, actual: unknown): boolean {
   return expected === actual;
 }
 
+/** Exact match, for `expect.result_exact`: equal JSON with no extra fields. */
+function jsonEqual(expected: unknown, actual: unknown): boolean {
+  if (isObject(expected) && isObject(actual)) {
+    const keys = Object.keys(expected);
+    return (
+      keys.length === Object.keys(actual).length &&
+      keys.every((k) => k in actual && jsonEqual(expected[k], actual[k]))
+    );
+  }
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    return expected.length === actual.length && expected.every((e, i) => jsonEqual(e, actual[i]));
+  }
+  return expected === actual;
+}
+
 interface Scenario {
   id: string;
   /** Absent/"workflow" starts a workflow; "actor" invokes catalog actor
@@ -103,6 +136,10 @@ interface Scenario {
   expect?: {
     status?: string;
     result?: unknown;
+    /** Assert the whole result rather than the fields `result` lists: equal
+     * JSON, with no extra fields. A falsy result is the value under test, and a
+     * structural match would accept any object for `{}`. */
+    result_exact?: boolean;
     error_code?: string;
     /** Substring the surfaced failure must contain, for `status: "failed"`.
      * Without it any failure passes, including a workflow whose failure could
@@ -121,6 +158,9 @@ interface Scenario {
      * whose workflow ends cancelled and so returns no result. */
     observed?: unknown;
   };
+  /** How long to keep watching a held run once it has been replayed, for
+   * `kind: "non_determinism_held"`. */
+  hold_ms?: number;
   /** Named client call to make, for `kind: "client_error"`. */
   client_call?: string;
   actor?: string;
@@ -357,7 +397,7 @@ async function runScenario(
     return [false, `expected completion but workflow failed: ${e}`];
   }
 
-  if (result === null) return [false, 'timed out waiting for a terminal state'];
+  // A timeout throws, so a null here is the workflow's own result.
   if (expect.status === 'failed') {
     return [false, `expected failure but workflow completed with: ${JSON.stringify(result)}`];
   }
@@ -377,11 +417,67 @@ async function runScenario(
     ];
   }
 
-  if (jsonMatches(expect.result ?? {}, result)) return [true, ''];
+  const matched = expect.result_exact
+    ? jsonEqual(expect.result, result)
+    : jsonMatches(expect.result ?? {}, result);
+  if (matched) return [true, ''];
   return [
     false,
     `result mismatch\n    expected: ${JSON.stringify(expect.result)}\n    actual:   ${JSON.stringify(result)}`,
   ];
+}
+
+/** Starts a workflow whose replay is not deterministic, and checks the run is
+ * held rather than carried on.
+ *
+ * Once the worker has replayed the workflow (activated it a second time), the
+ * run is watched for `hold_ms` more: it must still be running, and what the
+ * worker observed must match `expect.observed`. The run is terminated after,
+ * pass or fail: held, it would otherwise stay open for good. */
+async function runNonDeterminismHeldScenario(
+  client: Client,
+  taskQueue: string,
+  timeoutMs: number,
+  sc: Scenario
+): Promise<[boolean, string]> {
+  if (!sc.workflow || !sc.expect) return [false, 'held scenario missing `workflow`/`expect`'];
+  const expect = sc.expect;
+  const key = `conf-${randomUUID()}`;
+  const input = { ...(isObject(sc.input) ? sc.input : {}), key };
+  const handle = await client.startWorkflow({ workflowType: sc.workflow, taskQueue, args: [input] });
+  try {
+    const deadline = Date.now() + timeoutMs;
+    while ((activations.get(key) ?? 0) < 2 && Date.now() < deadline) {
+      await sleep(50);
+    }
+    await sleep(sc.hold_ms ?? 5000);
+
+    if (expect.status !== 'running') {
+      return [false, `unknown expected status '${expect.status}' for a held scenario`];
+    }
+    const status = String(await handle.status());
+    if (status !== 'RUNNING') {
+      let ended = '';
+      if (status === 'COMPLETED') {
+        ended = await handle
+          .resultWithTimeout(5000)
+          .then((r) => ` with ${JSON.stringify(r)}`)
+          .catch((e) => ` (${e})`);
+      }
+      return [false, `expected the run held running, it is ${status}${ended}`];
+    }
+    const observed = {
+      replayed: (activations.get(key) ?? 0) >= 2,
+      child_runs: childRuns.get(key) ?? 0,
+    };
+    if (jsonMatches(expect.observed ?? {}, observed)) return [true, ''];
+    return [
+      false,
+      `observed mismatch\n    expected: ${JSON.stringify(expect.observed)}\n    actual:   ${JSON.stringify(observed)}`,
+    ];
+  } finally {
+    await handle.terminate('contract: held run checked').catch(() => undefined);
+  }
 }
 
 /** Runs a workflow to completion, resets it to `reset_to_event_id`, then asserts
@@ -834,7 +930,9 @@ async function main(): Promise<void> {
   // `worker_crash` scenario whose task takes its worker process down.
   const workerOnly = process.env.ORCHER_CONTRACT_WORKER_ONLY;
   const taskQueue = workerOnly ?? 'contract';
-  const timeoutMs = 30_000;
+  // How long to wait for a workflow to reach a terminal state; longer on a
+  // loaded machine.
+  const timeoutMs = Number(process.env.ORCHER_RESULT_TIMEOUT_SECS ?? 30) * 1000;
   const scenariosPath = process.env.ORCHER_SCENARIOS ?? join(__dirname, 'scenarios.json');
 
   const spec = JSON.parse(readFileSync(scenariosPath, 'utf8')) as { scenarios: Scenario[] };
@@ -879,6 +977,14 @@ async function main(): Promise<void> {
       cancelCleanupWorkflow,
       cancelSaga,
       taskTimeoutTerminal,
+      sagaStepFailure,
+      sagaCompensateFailure,
+      countedChild,
+      childIdChangesOnReplay,
+      falsyTaskResults,
+      falsyResult,
+      listInput,
+      severalArguments,
     ],
     tasks: [
       alwaysFail,
@@ -894,6 +1000,15 @@ async function main(): Promise<void> {
       cancelReserve,
       cancelRelease,
       exitIfWorkerDoomedOnce,
+      sagaReserve,
+      sagaCharge,
+      sagaShip,
+      sagaRelease,
+      sagaRefund,
+      sagaCompensationsRan,
+      falsyValue,
+      listTask,
+      severalArgumentsTask,
     ],
   });
   try {
@@ -930,6 +1045,8 @@ async function main(): Promise<void> {
       [ok, msg] = await runCancelScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'cancel_queued_task') {
       [ok, msg] = await runCancelQueuedTaskScenario(client, serverUrl, namespace, timeoutMs, sc);
+    } else if (sc.kind === 'non_determinism_held') {
+      [ok, msg] = await runNonDeterminismHeldScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'engine_restart') {
       [ok, msg] = await runEngineRestartScenario(client, taskQueue, timeoutMs, sc);
     } else if (sc.kind === 'worker_crash') {
