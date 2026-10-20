@@ -1085,10 +1085,39 @@ async function main(): Promise<void> {
   }
 
   await worker.shutdown().catch(() => undefined);
+
+  // The worker measured its own calls to the engine and the work it ran, and
+  // keeps those measurements once it has stopped.
+  const problem = wireMetricsProblem(worker);
+  if (problem) {
+    console.log(`  FAIL  wire metrics: ${problem}`);
+    failed += 1;
+  } else {
+    console.log('  PASS  wire metrics');
+  }
+
   console.log(
     `\n${passed} passed, ${failed} failed, ${skipped} skipped, ${spec.scenarios.length} total`
   );
   process.exit(failed > 0 ? 1 : 0);
+}
+
+/** What is missing from the measurements of a worker that ran the suite. */
+function wireMetricsProblem(worker: Worker): string | null {
+  const wire = worker.wireMetrics();
+  if (!wire) return 'no measurements: the worker never started';
+  for (const method of [
+    '/orcher.v1.ExecutionService/PollWorkflowExecution',
+    '/orcher.v1.ExecutionService/PollTaskExecution',
+    '/orcher.v1.ExecutionService/CompleteWorkflowExecution',
+    '/orcher.v1.ExecutionService/CompleteTaskExecution',
+  ]) {
+    if (!wire.methods[method]?.calls) return `no calls of ${method}`;
+  }
+  if (!wire.work.activations || !wire.work.tasks) {
+    return `no work counted: ${JSON.stringify(wire.work)}`;
+  }
+  return null;
 }
 
 main().catch((e) => {

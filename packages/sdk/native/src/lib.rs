@@ -112,6 +112,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("hostDeleteActorState", host::host_delete_actor_state)?;
     cx.export_function("hostActorStateKeys", host::host_actor_state_keys)?;
     cx.export_function("hostShutdown", host::host_shutdown)?;
+    cx.export_function("hostWireMetrics", host::host_wire_metrics)?;
 
     // Actors, client side
     cx.export_function(

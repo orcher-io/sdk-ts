@@ -171,6 +171,9 @@ export { isDirectBindingsMode } from './core/native';
 export type {
   WorkerOptions,
   WorkerStats,
+  WireMetrics,
+  MethodStats,
+  WorkStats,
   ShutdownOptions,
   WorkerIdentity,
   WorkerCapabilities,

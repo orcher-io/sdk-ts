@@ -32,6 +32,8 @@ import {
   WorkerState,
   type WorkerOptions,
   type WorkerStats,
+  type WireMetrics,
+  type MethodStats,
   type ShutdownOptions,
   type WorkerIdentity,
   type WorkerCapabilities,
@@ -165,6 +167,8 @@ export class Worker {
   private client: Client | null = null;
   /** The running worker host, from `run()` until `shutdown()`. */
   private host: NativeHostHandle | null = null;
+  /** The host's measurements as it stopped, kept for `wireMetrics()`. */
+  private finalWireMetrics: WireMetrics | null = null;
   /** The loops pulling work from the host; they end once it has stopped. */
   private pullLoops: Promise<void>[] = [];
   private startTime: Date | null = null;
@@ -640,6 +644,15 @@ export class Worker {
    *
    * @returns Worker identity information
    */
+  /**
+   * What the worker measured of its calls to the engine, by gRPC method, and
+   * of the activations and tasks it ran. `null` before `run()` has started
+   * the worker; after it stops, its final measurements.
+   */
+  wireMetrics(): WireMetrics | null {
+    return this.host ? readWireMetrics(this.host) : this.finalWireMetrics;
+  }
+
   getIdentity(): WorkerIdentity {
     return {
       workerId: this.workerId,
@@ -1335,6 +1348,7 @@ export class Worker {
       const host = this.host;
       if (host) {
         await getNativeModule().hostShutdown(host);
+        this.finalWireMetrics = readWireMetrics(host);
         await this.settleWithin(this.pullLoops, PULL_LOOP_STOP_TIMEOUT_MS);
       }
       this.host = null;
@@ -1581,4 +1595,39 @@ export class Worker {
 
     return definitions;
   }
+}
+
+/** The host's measurements, with the field names TypeScript code uses. */
+function readWireMetrics(host: NativeHostHandle): WireMetrics {
+  const raw = JSON.parse(getNativeModule().hostWireMetrics(host)) as {
+    methods: Record<string, Record<string, unknown>>;
+    work: Record<string, number>;
+  };
+  const methods: Record<string, MethodStats> = {};
+  for (const [method, stats] of Object.entries(raw.methods)) {
+    methods[method] = {
+      calls: stats['calls'] as number,
+      statusErrors: stats['status_errors'] as Record<string, number>,
+      transportErrors: stats['transport_errors'] as number,
+      retries: stats['retries'] as number,
+      latencyBuckets: stats['latency_buckets'] as number[],
+      latencyTotalUs: stats['latency_total_us'] as number,
+    };
+  }
+  const w = raw.work;
+  return {
+    methods,
+    work: {
+      activations: w['activations'] ?? 0,
+      activationJournalEntries: w['activation_journal_entries'] ?? 0,
+      workflowReports: w['workflow_reports'] ?? 0,
+      workflowCommands: w['workflow_commands'] ?? 0,
+      workflowFailures: w['workflow_failures'] ?? 0,
+      tasks: w['tasks'] ?? 0,
+      taskInputBytes: w['task_input_bytes'] ?? 0,
+      taskReports: w['task_reports'] ?? 0,
+      taskResultBytes: w['task_result_bytes'] ?? 0,
+      taskFailures: w['task_failures'] ?? 0,
+    },
+  };
 }

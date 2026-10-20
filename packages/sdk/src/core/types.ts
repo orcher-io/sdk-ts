@@ -719,6 +719,13 @@ export interface NativeModule {
   hostShutdown(host: NativeHostHandle): Promise<void>;
 
   /**
+   * The worker's measurements so far, as JSON: per gRPC method its calls,
+   * status errors by code, transport errors, retries and latency, and the
+   * activations and tasks it ran.
+   */
+  hostWireMetrics(host: NativeHostHandle): string;
+
+  /**
    * Invoke an actor operation from the client side
    */
   clientInvokeActorOperation?(
