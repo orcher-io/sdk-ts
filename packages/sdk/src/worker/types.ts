@@ -261,6 +261,52 @@ export enum WorkerState {
 }
 
 /**
+ * What a worker measured of one gRPC method it calls on the engine.
+ */
+export interface MethodStats {
+  /** Calls made, retries included. */
+  calls: number;
+  /** Calls the engine answered with an error status, by gRPC status code. */
+  statusErrors: Record<string, number>;
+  /** Calls that failed before the engine answered. */
+  transportErrors: number;
+  /** Calls that repeated an earlier one. */
+  retries: number;
+  /**
+   * Call latencies, counted in buckets with upper bounds of 1, 5, 10, 25, 50,
+   * 100, 250, 500, 1000, 2500, 5000 and 10000 ms, then one for anything longer.
+   */
+  latencyBuckets: number[];
+  /** Total latency of every call, in microseconds. */
+  latencyTotalUs: number;
+}
+
+/**
+ * The work a worker handed to its code and reported back.
+ */
+export interface WorkStats {
+  activations: number;
+  activationJournalEntries: number;
+  workflowReports: number;
+  workflowCommands: number;
+  workflowFailures: number;
+  tasks: number;
+  taskInputBytes: number;
+  taskReports: number;
+  taskResultBytes: number;
+  taskFailures: number;
+}
+
+/**
+ * A worker's measurements of its calls to the engine and the work it ran,
+ * returned by `Worker.wireMetrics()`. Methods are keyed by gRPC path.
+ */
+export interface WireMetrics {
+  methods: Record<string, MethodStats>;
+  work: WorkStats;
+}
+
+/**
  * Execution statistics for a worker, returned by `Worker.getStats()`.
  */
 export interface WorkerStats {

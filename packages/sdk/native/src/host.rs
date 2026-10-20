@@ -478,6 +478,19 @@ pub fn host_shutdown(mut cx: FunctionContext) -> JsResult<JsPromise> {
     })
 }
 
+/// `hostWireMetrics(host) -> string`
+///
+/// The worker's measurements so far, as JSON: per gRPC method its calls,
+/// status errors by code, transport errors, retries and latency, and the
+/// activations and tasks it ran.
+pub fn host_wire_metrics(mut cx: FunctionContext) -> JsResult<JsString> {
+    let host = host_arg(&mut cx, 0)?;
+    match serde_json::to_string(&host.wire_metrics()) {
+        Ok(json) => Ok(cx.string(json)),
+        Err(e) => cx.throw_error(format!("the measurements did not encode: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
