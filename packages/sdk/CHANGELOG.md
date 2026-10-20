@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.11](https://github.com/orcher-io/sdk-ts/compare/v0.5.10...v0.5.11) (2026-10-19)
+
+
+### Bug Fixes
+
+* mark a workflow failure non-retryable only when its code raised it so ([#54](https://github.com/orcher-io/sdk-ts/issues/54)) ([d22ee37](https://github.com/orcher-io/sdk-ts/commit/d22ee37c3822dbccf0848babff598293bdb0620c))
+* send the calls a failing workflow made before it failed ([#56](https://github.com/orcher-io/sdk-ts/issues/56)) ([7ba2e79](https://github.com/orcher-io/sdk-ts/commit/7ba2e798a4ac526a4ddee4c1d4cb5d88c200a9eb))
+
 ## [0.5.10](https://github.com/orcher-io/sdk-ts/compare/v0.5.9...v0.5.10) (2026-10-18)
 
 
