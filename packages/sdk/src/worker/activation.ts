@@ -668,12 +668,19 @@ function payloadOf(payload: HandlerPayload | undefined): Payload {
   });
 }
 
+/**
+ * A task's retry policy as the kernel takes it. An omitted count is the
+ * documented default of 3 (0 is unlimited); an omitted delay or backoff
+ * coefficient is left unset, and the kernel applies its defaults.
+ */
 function retryPolicy(policy: any): RetryPolicy {
+  const firstDelay = policy.initialInterval ?? policy.initial_interval;
+  const maxDelay = policy.maxInterval ?? policy.max_interval;
   return RetryPolicy.create({
     maxAttempts: policy.maxAttempts ?? policy.max_attempts ?? DEFAULT_MAX_ATTEMPTS,
-    firstDelay: duration(policy.initialInterval ?? policy.initial_interval ?? 1000),
-    maxDelay: duration(policy.maxInterval ?? policy.max_interval ?? 60000),
-    delayMultiplier: policy.backoffCoefficient ?? policy.backoff_coefficient ?? 2.0,
+    firstDelay: typeof firstDelay === 'number' ? duration(firstDelay) : undefined,
+    maxDelay: typeof maxDelay === 'number' ? duration(maxDelay) : undefined,
+    delayMultiplier: policy.backoffCoefficient ?? policy.backoff_coefficient ?? 0,
     // `nonRetryableErrorTypes` is the typed field; the other two spellings
     // are accepted from untyped policies.
     neverRetryTypes:

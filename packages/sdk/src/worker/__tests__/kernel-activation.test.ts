@@ -178,6 +178,43 @@ describe('a kernel activation', () => {
     expect(what.runTask.retryPolicy?.maxAttempts).toBe(sent);
   });
 
+  it("leaves a task retry policy's omitted delays and backoff to the kernel", () => {
+    const sent = (retryPolicy: Record<string, unknown>) => {
+      const commands = kernelCommands(
+        [
+          {
+            type: WorkflowCommandType.SCHEDULE_TASK,
+            sequence: 0,
+            taskId: 'ship_0',
+            taskType: 'ship',
+            taskQueue: 'q',
+            input: {},
+            retryPolicy,
+          },
+        ],
+        [{ kind: 'task' as const, id: 'ship_0' }]
+      );
+      const what = commands[0]?.what;
+      if (what?.oneofKind !== 'runTask') throw new Error('no task');
+      return what.runTask.retryPolicy!;
+    };
+
+    const omitted = sent({ maxAttempts: 4 });
+    expect(omitted.firstDelay).toBeUndefined();
+    expect(omitted.maxDelay).toBeUndefined();
+    expect(omitted.delayMultiplier).toBe(0);
+
+    const given = sent({
+      maxAttempts: 4,
+      initialInterval: 250,
+      maxInterval: 9_000,
+      backoffCoefficient: 1.5,
+    });
+    expect(given.firstDelay).toEqual({ seconds: '0', nanos: 250_000_000 });
+    expect(given.maxDelay).toEqual({ seconds: '9', nanos: 0 });
+    expect(given.delayMultiplier).toBe(1.5);
+  });
+
   it('answers a command the protocol cannot carry with a protocol error', () => {
     const result = answerActivation(
       new Uint8Array(),
