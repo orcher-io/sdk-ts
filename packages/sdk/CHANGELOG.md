@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.12](https://github.com/orcher-io/sdk-ts/compare/v0.5.11...v0.5.12) (2026-10-21)
+
+
+### Features
+
+* expose the worker's measurements of the engine wire and its work ([#59](https://github.com/orcher-io/sdk-ts/issues/59)) ([b8206e1](https://github.com/orcher-io/sdk-ts/commit/b8206e1595440606d4240e6901e79fd1835fe5cf))
+* move to sdk-core 0.19 ([#60](https://github.com/orcher-io/sdk-ts/issues/60)) ([38fd330](https://github.com/orcher-io/sdk-ts/commit/38fd3308ca0b1ef5ca142e91921f1ddb459a96cc))
+
+
+### Bug Fixes
+
+* leave a task retry policy's omitted delays to the kernel ([#57](https://github.com/orcher-io/sdk-ts/issues/57)) ([b41f8bc](https://github.com/orcher-io/sdk-ts/commit/b41f8bca0b1c70d9421b1fd87bc3afb5b5b163c0))
+
 ## [0.5.11](https://github.com/orcher-io/sdk-ts/compare/v0.5.10...v0.5.11) (2026-10-19)
 
 
