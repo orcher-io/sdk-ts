@@ -1106,13 +1106,20 @@ async function main(): Promise<void> {
 function wireMetricsProblem(worker: Worker): string | null {
   const wire = worker.wireMetrics();
   if (!wire) return 'no measurements: the worker never started';
-  for (const method of [
+  const calls = (method: string): number => wire.methods[method]?.calls ?? 0;
+  // An engine that hands out several items per poll is polled with the batch
+  // calls; an older one, one item at a time.
+  for (const one of [
     '/orcher.v1.ExecutionService/PollWorkflowExecution',
     '/orcher.v1.ExecutionService/PollTaskExecution',
+  ]) {
+    if (calls(one) + calls(`${one}s`) === 0) return `no calls of ${one} or ${one}s`;
+  }
+  for (const method of [
     '/orcher.v1.ExecutionService/CompleteWorkflowExecution',
     '/orcher.v1.ExecutionService/CompleteTaskExecution',
   ]) {
-    if (!wire.methods[method]?.calls) return `no calls of ${method}`;
+    if (calls(method) === 0) return `no calls of ${method}`;
   }
   if (!wire.work.activations || !wire.work.tasks) {
     return `no work counted: ${JSON.stringify(wire.work)}`;

@@ -27,7 +27,8 @@ export interface WorkerHello {
      * Every semantic protocol version the SDK implements. The kernel uses the
      * highest one it also implements and reports it to the engine as the
      * worker's protocol version (0 = baseline, 1 = handles a cancel request,
-     * 2 = activations resolved by the kernel).
+     * 2 = a workflow failure is non-retryable only when the code raised it so,
+     * 3 = activations resolved by the kernel).
      *
      * @generated from protobuf field: repeated uint32 protocol_versions = 1
      */
@@ -52,7 +53,7 @@ export interface WorkerHello {
     language: string;
     /**
      * Deprecated: use `supported_step_ids`, which can name more than one. The
-     * single step-id scheme this SDK used before protocol version 2.
+     * single step-id scheme this SDK used before protocol version 3.
      *
      * @generated from protobuf field: orcher.kernel.v1.StepIdScheme legacy_step_ids = 5
      */
@@ -1389,26 +1390,26 @@ export enum StepIdScheme {
      */
     UNSPECIFIED = 0,
     /**
-     * The kernel's scheme, used by every run started on protocol version 2.
+     * The kernel's scheme, used by every run started on protocol version 3.
      *
      * @generated from protobuf enum value: STEP_ID_SCHEME_KERNEL = 1;
      */
     KERNEL = 1,
     /**
-     * The Rust SDK's ids before protocol version 2. Frozen.
+     * The Rust SDK's ids before protocol version 3. Frozen.
      *
      * @generated from protobuf enum value: STEP_ID_SCHEME_RUST_V0 = 2;
      */
     RUST_V0 = 2,
     /**
-     * The Python SDK's ids before protocol version 2: its call counter starts
+     * The Python SDK's ids before protocol version 3: its call counter starts
      * at 1, and an event wait's id has no sequence number. Frozen.
      *
      * @generated from protobuf enum value: STEP_ID_SCHEME_PYTHON_V0 = 3;
      */
     PYTHON_V0 = 3,
     /**
-     * The TypeScript SDK's ids before protocol version 2: a child workflow
+     * The TypeScript SDK's ids before protocol version 3: a child workflow
      * started without an id is named `child_{n}`. Frozen.
      *
      * @generated from protobuf enum value: STEP_ID_SCHEME_TYPESCRIPT_V0 = 4;

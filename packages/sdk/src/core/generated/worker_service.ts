@@ -107,6 +107,10 @@ export interface WorkerCapabilities {
      * it what it can handle. 0 (unset) is every worker from before this field.
      *   1: handles a workflow cancellation request delivered in the journal,
      *      letting the workflow clean up before it ends.
+     *   2: a workflow failure's Failure.non_retryable is set only when the
+     *      workflow code raised the failure as non-retryable. The engine then
+     *      never retries it, whatever the workflow's retry policy allows; below
+     *      2 it retries every workflow failure by the policy alone.
      *
      * @generated from protobuf field: uint32 protocol_version = 5
      */
