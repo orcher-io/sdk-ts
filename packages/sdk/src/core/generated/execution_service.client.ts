@@ -13,6 +13,8 @@ import type { RespondUpdateTaskResponse } from "./execution_service";
 import type { RespondUpdateTaskRequest } from "./execution_service";
 import type { RespondQueryTaskResponse } from "./execution_service";
 import type { RespondQueryTaskRequest } from "./execution_service";
+import type { RecordTaskHeartbeatsResponse } from "./execution_service";
+import type { RecordTaskHeartbeatsRequest } from "./execution_service";
 import type { RecordTaskHeartbeatResponse } from "./execution_service";
 import type { RecordTaskHeartbeatRequest } from "./execution_service";
 import type { CancelTaskExecutionResponse } from "./execution_service";
@@ -25,6 +27,10 @@ import type { FailWorkflowExecutionResponse } from "./execution_service";
 import type { FailWorkflowExecutionRequest } from "./execution_service";
 import type { CompleteWorkflowExecutionResponse } from "./execution_service";
 import type { CompleteWorkflowExecutionRequest } from "./execution_service";
+import type { PollTaskExecutionsResponse } from "./execution_service";
+import type { PollTaskExecutionsRequest } from "./execution_service";
+import type { PollWorkflowExecutionsResponse } from "./execution_service";
+import type { PollWorkflowExecutionsRequest } from "./execution_service";
 import type { PollTaskExecutionResponse } from "./execution_service";
 import type { PollTaskExecutionRequest } from "./execution_service";
 import { stackIntercept } from "@protobuf-ts/runtime-rpc";
@@ -58,6 +64,24 @@ export interface IExecutionServiceClient {
      * @generated from protobuf rpc: PollTaskExecution
      */
     pollTaskExecution(input: PollTaskExecutionRequest, options?: RpcOptions): UnaryCall<PollTaskExecutionRequest, PollTaskExecutionResponse>;
+    /**
+     * PollWorkflowExecutions polls for up to `max_items` workflow activations
+     * at once, each claimed for the polling worker as one poll would claim it.
+     * It long-polls like PollWorkflowExecution, and answers as soon as one
+     * activation is ready, with as many as are ready up to the limit.
+     *
+     * @generated from protobuf rpc: PollWorkflowExecutions
+     */
+    pollWorkflowExecutions(input: PollWorkflowExecutionsRequest, options?: RpcOptions): UnaryCall<PollWorkflowExecutionsRequest, PollWorkflowExecutionsResponse>;
+    /**
+     * PollTaskExecutions polls for up to `max_items` tasks at once, each
+     * started for the polling worker as one poll would start it. It long-polls
+     * like PollTaskExecution, and answers as soon as one task is ready, with as
+     * many as are ready up to the limit.
+     *
+     * @generated from protobuf rpc: PollTaskExecutions
+     */
+    pollTaskExecutions(input: PollTaskExecutionsRequest, options?: RpcOptions): UnaryCall<PollTaskExecutionsRequest, PollTaskExecutionsResponse>;
     /**
      * CompleteWorkflowExecution reports the result of a workflow execution step:
      * the commands the workflow produced and any query or update results.
@@ -97,6 +121,15 @@ export interface IExecutionServiceClient {
      * @generated from protobuf rpc: RecordTaskHeartbeat
      */
     recordTaskHeartbeat(input: RecordTaskHeartbeatRequest, options?: RpcOptions): UnaryCall<RecordTaskHeartbeatRequest, RecordTaskHeartbeatResponse>;
+    /**
+     * RecordTaskHeartbeats sends the heartbeats of several running tasks in
+     * one call, each as RecordTaskHeartbeat would send it, and answers each:
+     * whether it was recorded, and whether its task has been asked to cancel.
+     * One task's heartbeat being refused does not refuse the others.
+     *
+     * @generated from protobuf rpc: RecordTaskHeartbeats
+     */
+    recordTaskHeartbeats(input: RecordTaskHeartbeatsRequest, options?: RpcOptions): UnaryCall<RecordTaskHeartbeatsRequest, RecordTaskHeartbeatsResponse>;
     /**
      * RespondQueryTask responds to a workflow query.
      *
@@ -182,13 +215,37 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
         return stackIntercept<PollTaskExecutionRequest, PollTaskExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
+     * PollWorkflowExecutions polls for up to `max_items` workflow activations
+     * at once, each claimed for the polling worker as one poll would claim it.
+     * It long-polls like PollWorkflowExecution, and answers as soon as one
+     * activation is ready, with as many as are ready up to the limit.
+     *
+     * @generated from protobuf rpc: PollWorkflowExecutions
+     */
+    pollWorkflowExecutions(input: PollWorkflowExecutionsRequest, options?: RpcOptions): UnaryCall<PollWorkflowExecutionsRequest, PollWorkflowExecutionsResponse> {
+        const method = this.methods[2]!, opt = this._transport.mergeOptions(options);
+        return stackIntercept<PollWorkflowExecutionsRequest, PollWorkflowExecutionsResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
+     * PollTaskExecutions polls for up to `max_items` tasks at once, each
+     * started for the polling worker as one poll would start it. It long-polls
+     * like PollTaskExecution, and answers as soon as one task is ready, with as
+     * many as are ready up to the limit.
+     *
+     * @generated from protobuf rpc: PollTaskExecutions
+     */
+    pollTaskExecutions(input: PollTaskExecutionsRequest, options?: RpcOptions): UnaryCall<PollTaskExecutionsRequest, PollTaskExecutionsResponse> {
+        const method = this.methods[3]!, opt = this._transport.mergeOptions(options);
+        return stackIntercept<PollTaskExecutionsRequest, PollTaskExecutionsResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
      * CompleteWorkflowExecution reports the result of a workflow execution step:
      * the commands the workflow produced and any query or update results.
      *
      * @generated from protobuf rpc: CompleteWorkflowExecution
      */
     completeWorkflowExecution(input: CompleteWorkflowExecutionRequest, options?: RpcOptions): UnaryCall<CompleteWorkflowExecutionRequest, CompleteWorkflowExecutionResponse> {
-        const method = this.methods[2]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[4]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<CompleteWorkflowExecutionRequest, CompleteWorkflowExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -197,7 +254,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: FailWorkflowExecution
      */
     failWorkflowExecution(input: FailWorkflowExecutionRequest, options?: RpcOptions): UnaryCall<FailWorkflowExecutionRequest, FailWorkflowExecutionResponse> {
-        const method = this.methods[3]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[5]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<FailWorkflowExecutionRequest, FailWorkflowExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -206,7 +263,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: CompleteTaskExecution
      */
     completeTaskExecution(input: CompleteTaskExecutionRequest, options?: RpcOptions): UnaryCall<CompleteTaskExecutionRequest, CompleteTaskExecutionResponse> {
-        const method = this.methods[4]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[6]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<CompleteTaskExecutionRequest, CompleteTaskExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -215,7 +272,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: FailTaskExecution
      */
     failTaskExecution(input: FailTaskExecutionRequest, options?: RpcOptions): UnaryCall<FailTaskExecutionRequest, FailTaskExecutionResponse> {
-        const method = this.methods[5]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[7]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<FailTaskExecutionRequest, FailTaskExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -224,7 +281,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: CancelTaskExecution
      */
     cancelTaskExecution(input: CancelTaskExecutionRequest, options?: RpcOptions): UnaryCall<CancelTaskExecutionRequest, CancelTaskExecutionResponse> {
-        const method = this.methods[6]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[8]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<CancelTaskExecutionRequest, CancelTaskExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -235,8 +292,20 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: RecordTaskHeartbeat
      */
     recordTaskHeartbeat(input: RecordTaskHeartbeatRequest, options?: RpcOptions): UnaryCall<RecordTaskHeartbeatRequest, RecordTaskHeartbeatResponse> {
-        const method = this.methods[7]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[9]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<RecordTaskHeartbeatRequest, RecordTaskHeartbeatResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
+     * RecordTaskHeartbeats sends the heartbeats of several running tasks in
+     * one call, each as RecordTaskHeartbeat would send it, and answers each:
+     * whether it was recorded, and whether its task has been asked to cancel.
+     * One task's heartbeat being refused does not refuse the others.
+     *
+     * @generated from protobuf rpc: RecordTaskHeartbeats
+     */
+    recordTaskHeartbeats(input: RecordTaskHeartbeatsRequest, options?: RpcOptions): UnaryCall<RecordTaskHeartbeatsRequest, RecordTaskHeartbeatsResponse> {
+        const method = this.methods[10]!, opt = this._transport.mergeOptions(options);
+        return stackIntercept<RecordTaskHeartbeatsRequest, RecordTaskHeartbeatsResponse>("unary", this._transport, method, opt, input);
     }
     /**
      * RespondQueryTask responds to a workflow query.
@@ -244,7 +313,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: RespondQueryTask
      */
     respondQueryTask(input: RespondQueryTaskRequest, options?: RpcOptions): UnaryCall<RespondQueryTaskRequest, RespondQueryTaskResponse> {
-        const method = this.methods[8]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[11]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<RespondQueryTaskRequest, RespondQueryTaskResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -253,7 +322,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: RespondUpdateTask
      */
     respondUpdateTask(input: RespondUpdateTaskRequest, options?: RpcOptions): UnaryCall<RespondUpdateTaskRequest, RespondUpdateTaskResponse> {
-        const method = this.methods[9]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[12]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<RespondUpdateTaskRequest, RespondUpdateTaskResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -272,7 +341,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: ReleaseWorkflowExecution
      */
     releaseWorkflowExecution(input: ReleaseWorkflowExecutionRequest, options?: RpcOptions): UnaryCall<ReleaseWorkflowExecutionRequest, ReleaseWorkflowExecutionResponse> {
-        const method = this.methods[10]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[13]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<ReleaseWorkflowExecutionRequest, ReleaseWorkflowExecutionResponse>("unary", this._transport, method, opt, input);
     }
     /**
@@ -293,7 +362,7 @@ export class ExecutionServiceClient implements IExecutionServiceClient, ServiceI
      * @generated from protobuf rpc: ShutdownWorker
      */
     shutdownWorker(input: ShutdownWorkerRequest, options?: RpcOptions): UnaryCall<ShutdownWorkerRequest, ShutdownWorkerResponse> {
-        const method = this.methods[11]!, opt = this._transport.mergeOptions(options);
+        const method = this.methods[14]!, opt = this._transport.mergeOptions(options);
         return stackIntercept<ShutdownWorkerRequest, ShutdownWorkerResponse>("unary", this._transport, method, opt, input);
     }
 }

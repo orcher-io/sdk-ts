@@ -398,6 +398,79 @@ export interface PollTaskExecutionRequest {
     taskCapabilities?: TaskCapabilities;
 }
 /**
+ * PollWorkflowExecutionsRequest asks for several workflow activations in one
+ * poll.
+ *
+ * @generated from protobuf message orcher.v1.PollWorkflowExecutionsRequest
+ */
+export interface PollWorkflowExecutionsRequest {
+    /**
+     * The poll itself: queue, namespace, identity, timeout and the rest, as
+     * for a poll for one activation.
+     *
+     * @generated from protobuf field: orcher.v1.PollWorkflowExecutionRequest poll = 1
+     */
+    poll?: PollWorkflowExecutionRequest;
+    /**
+     * The most activations to hand out: as many as the worker has room to
+     * run. The server may hand out fewer, and caps how many one poll takes so
+     * that one worker cannot drain a queue other workers poll. 0 means 1.
+     *
+     * @generated from protobuf field: uint32 max_items = 2
+     */
+    maxItems: number;
+}
+/**
+ * PollWorkflowExecutionsResponse carries the activations a poll claimed.
+ *
+ * @generated from protobuf message orcher.v1.PollWorkflowExecutionsResponse
+ */
+export interface PollWorkflowExecutionsResponse {
+    /**
+     * Each activation as a poll for one would carry it. Empty when the poll
+     * timed out with none ready.
+     *
+     * @generated from protobuf field: repeated orcher.v1.PollWorkflowExecutionResponse executions = 1
+     */
+    executions: PollWorkflowExecutionResponse[];
+}
+/**
+ * PollTaskExecutionsRequest asks for several tasks in one poll.
+ *
+ * @generated from protobuf message orcher.v1.PollTaskExecutionsRequest
+ */
+export interface PollTaskExecutionsRequest {
+    /**
+     * The poll itself: queue, namespace, identity, timeout and the rest, as
+     * for a poll for one task.
+     *
+     * @generated from protobuf field: orcher.v1.PollTaskExecutionRequest poll = 1
+     */
+    poll?: PollTaskExecutionRequest;
+    /**
+     * The most tasks to hand out: as many as the worker has room to run. The
+     * server may hand out fewer, and caps how many one poll takes so that one
+     * worker cannot drain a queue other workers poll. 0 means 1.
+     *
+     * @generated from protobuf field: uint32 max_items = 2
+     */
+    maxItems: number;
+}
+/**
+ * PollTaskExecutionsResponse carries the tasks a poll started.
+ *
+ * @generated from protobuf message orcher.v1.PollTaskExecutionsResponse
+ */
+export interface PollTaskExecutionsResponse {
+    /**
+     * Each task as a poll for one would carry it. Empty when the poll timed
+     * out with none ready.
+     *
+     * @generated from protobuf field: repeated orcher.v1.PollTaskExecutionResponse tasks = 1
+     */
+    tasks: PollTaskExecutionResponse[];
+}
+/**
  * TaskCapabilities declares what a service does with the tasks it runs,
  * beyond what every service does. The server adapts how it serves a task to
  * what the service that runs it declares; a service that declares nothing
@@ -695,6 +768,98 @@ export interface RecordTaskHeartbeatResponse {
      * @generated from protobuf field: bool cancel_requested = 1
      */
     cancelRequested: boolean;
+}
+/**
+ * RecordTaskHeartbeatsRequest sends the heartbeats of several running tasks.
+ *
+ * @generated from protobuf message orcher.v1.RecordTaskHeartbeatsRequest
+ */
+export interface RecordTaskHeartbeatsRequest {
+    /**
+     * Namespace of the tasks.
+     *
+     * @generated from protobuf field: string namespace = 1
+     */
+    namespace: string;
+    /**
+     * Identity of the service sending them.
+     *
+     * @generated from protobuf field: string identity = 2
+     */
+    identity: string;
+    /**
+     * One heartbeat per task.
+     *
+     * @generated from protobuf field: repeated orcher.v1.TaskHeartbeatEntry heartbeats = 3
+     */
+    heartbeats: TaskHeartbeatEntry[];
+}
+/**
+ * TaskHeartbeatEntry is one task's heartbeat in RecordTaskHeartbeatsRequest.
+ *
+ * @generated from protobuf message orcher.v1.TaskHeartbeatEntry
+ */
+export interface TaskHeartbeatEntry {
+    /**
+     * Task token from PollTaskExecutionResponse.
+     *
+     * @generated from protobuf field: bytes task_token = 1
+     */
+    taskToken: Uint8Array;
+    /**
+     * Progress details to record (optional), as in RecordTaskHeartbeatRequest.
+     *
+     * @generated from protobuf field: bytes details = 2
+     */
+    details: Uint8Array;
+}
+/**
+ * RecordTaskHeartbeatsResponse answers each heartbeat of the request.
+ *
+ * @generated from protobuf message orcher.v1.RecordTaskHeartbeatsResponse
+ */
+export interface RecordTaskHeartbeatsResponse {
+    /**
+     * One answer per heartbeat, in the order the request sent them.
+     *
+     * @generated from protobuf field: repeated orcher.v1.TaskHeartbeatAnswer answers = 1
+     */
+    answers: TaskHeartbeatAnswer[];
+}
+/**
+ * TaskHeartbeatAnswer says what became of one task's heartbeat.
+ *
+ * @generated from protobuf message orcher.v1.TaskHeartbeatAnswer
+ */
+export interface TaskHeartbeatAnswer {
+    /**
+     * The task token the heartbeat carried.
+     *
+     * @generated from protobuf field: bytes task_token = 1
+     */
+    taskToken: Uint8Array;
+    /**
+     * Whether the task has been asked to cancel. Set only for a heartbeat
+     * that was recorded.
+     *
+     * @generated from protobuf field: bool cancel_requested = 2
+     */
+    cancelRequested: boolean;
+    /**
+     * 0 (OK) when the heartbeat was recorded. Otherwise the gRPC status code
+     * RecordTaskHeartbeat would have refused it with: NOT_FOUND for a token
+     * that names no task the caller may act on, FAILED_PRECONDITION for a task
+     * that is no longer running, UNAVAILABLE for one that may be sent again.
+     *
+     * @generated from protobuf field: int32 refused_code = 3
+     */
+    refusedCode: number;
+    /**
+     * Why it was refused; empty when it was recorded.
+     *
+     * @generated from protobuf field: string refused_message = 4
+     */
+    refusedMessage: string;
 }
 /**
  * RespondQueryTaskRequest responds to a workflow query.
@@ -1717,6 +1882,208 @@ class PollTaskExecutionRequest$Type extends MessageType<PollTaskExecutionRequest
  */
 export const PollTaskExecutionRequest = new PollTaskExecutionRequest$Type();
 // @generated message type with reflection information, may provide speed optimized methods
+class PollWorkflowExecutionsRequest$Type extends MessageType<PollWorkflowExecutionsRequest> {
+    constructor() {
+        super("orcher.v1.PollWorkflowExecutionsRequest", [
+            { no: 1, name: "poll", kind: "message", T: () => PollWorkflowExecutionRequest },
+            { no: 2, name: "max_items", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
+        ]);
+    }
+    override create(value?: PartialMessage<PollWorkflowExecutionsRequest>): PollWorkflowExecutionsRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.maxItems = 0;
+        if (value !== undefined)
+            reflectionMergePartial<PollWorkflowExecutionsRequest>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PollWorkflowExecutionsRequest): PollWorkflowExecutionsRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* orcher.v1.PollWorkflowExecutionRequest poll */ 1:
+                    message.poll = PollWorkflowExecutionRequest.internalBinaryRead(reader, reader.uint32(), options, message.poll);
+                    break;
+                case /* uint32 max_items */ 2:
+                    message.maxItems = reader.uint32();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: PollWorkflowExecutionsRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* orcher.v1.PollWorkflowExecutionRequest poll = 1; */
+        if (message.poll)
+            PollWorkflowExecutionRequest.internalBinaryWrite(message.poll, writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        /* uint32 max_items = 2; */
+        if (message.maxItems !== 0)
+            writer.tag(2, WireType.Varint).uint32(message.maxItems);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.PollWorkflowExecutionsRequest
+ */
+export const PollWorkflowExecutionsRequest = new PollWorkflowExecutionsRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class PollWorkflowExecutionsResponse$Type extends MessageType<PollWorkflowExecutionsResponse> {
+    constructor() {
+        super("orcher.v1.PollWorkflowExecutionsResponse", [
+            { no: 1, name: "executions", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => PollWorkflowExecutionResponse }
+        ]);
+    }
+    override create(value?: PartialMessage<PollWorkflowExecutionsResponse>): PollWorkflowExecutionsResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.executions = [];
+        if (value !== undefined)
+            reflectionMergePartial<PollWorkflowExecutionsResponse>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PollWorkflowExecutionsResponse): PollWorkflowExecutionsResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated orcher.v1.PollWorkflowExecutionResponse executions */ 1:
+                    message.executions.push(PollWorkflowExecutionResponse.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: PollWorkflowExecutionsResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated orcher.v1.PollWorkflowExecutionResponse executions = 1; */
+        for (let i = 0; i < message.executions.length; i++)
+            PollWorkflowExecutionResponse.internalBinaryWrite(message.executions[i], writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.PollWorkflowExecutionsResponse
+ */
+export const PollWorkflowExecutionsResponse = new PollWorkflowExecutionsResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class PollTaskExecutionsRequest$Type extends MessageType<PollTaskExecutionsRequest> {
+    constructor() {
+        super("orcher.v1.PollTaskExecutionsRequest", [
+            { no: 1, name: "poll", kind: "message", T: () => PollTaskExecutionRequest },
+            { no: 2, name: "max_items", kind: "scalar", T: 13 /*ScalarType.UINT32*/ }
+        ]);
+    }
+    override create(value?: PartialMessage<PollTaskExecutionsRequest>): PollTaskExecutionsRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.maxItems = 0;
+        if (value !== undefined)
+            reflectionMergePartial<PollTaskExecutionsRequest>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PollTaskExecutionsRequest): PollTaskExecutionsRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* orcher.v1.PollTaskExecutionRequest poll */ 1:
+                    message.poll = PollTaskExecutionRequest.internalBinaryRead(reader, reader.uint32(), options, message.poll);
+                    break;
+                case /* uint32 max_items */ 2:
+                    message.maxItems = reader.uint32();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: PollTaskExecutionsRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* orcher.v1.PollTaskExecutionRequest poll = 1; */
+        if (message.poll)
+            PollTaskExecutionRequest.internalBinaryWrite(message.poll, writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        /* uint32 max_items = 2; */
+        if (message.maxItems !== 0)
+            writer.tag(2, WireType.Varint).uint32(message.maxItems);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.PollTaskExecutionsRequest
+ */
+export const PollTaskExecutionsRequest = new PollTaskExecutionsRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class PollTaskExecutionsResponse$Type extends MessageType<PollTaskExecutionsResponse> {
+    constructor() {
+        super("orcher.v1.PollTaskExecutionsResponse", [
+            { no: 1, name: "tasks", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => PollTaskExecutionResponse }
+        ]);
+    }
+    override create(value?: PartialMessage<PollTaskExecutionsResponse>): PollTaskExecutionsResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.tasks = [];
+        if (value !== undefined)
+            reflectionMergePartial<PollTaskExecutionsResponse>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: PollTaskExecutionsResponse): PollTaskExecutionsResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated orcher.v1.PollTaskExecutionResponse tasks */ 1:
+                    message.tasks.push(PollTaskExecutionResponse.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: PollTaskExecutionsResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated orcher.v1.PollTaskExecutionResponse tasks = 1; */
+        for (let i = 0; i < message.tasks.length; i++)
+            PollTaskExecutionResponse.internalBinaryWrite(message.tasks[i], writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.PollTaskExecutionsResponse
+ */
+export const PollTaskExecutionsResponse = new PollTaskExecutionsResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
 class TaskCapabilities$Type extends MessageType<TaskCapabilities> {
     constructor() {
         super("orcher.v1.TaskCapabilities", [
@@ -2386,6 +2753,242 @@ class RecordTaskHeartbeatResponse$Type extends MessageType<RecordTaskHeartbeatRe
  * @generated MessageType for protobuf message orcher.v1.RecordTaskHeartbeatResponse
  */
 export const RecordTaskHeartbeatResponse = new RecordTaskHeartbeatResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class RecordTaskHeartbeatsRequest$Type extends MessageType<RecordTaskHeartbeatsRequest> {
+    constructor() {
+        super("orcher.v1.RecordTaskHeartbeatsRequest", [
+            { no: 1, name: "namespace", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 2, name: "identity", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 3, name: "heartbeats", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => TaskHeartbeatEntry }
+        ]);
+    }
+    override create(value?: PartialMessage<RecordTaskHeartbeatsRequest>): RecordTaskHeartbeatsRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.namespace = "";
+        message.identity = "";
+        message.heartbeats = [];
+        if (value !== undefined)
+            reflectionMergePartial<RecordTaskHeartbeatsRequest>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: RecordTaskHeartbeatsRequest): RecordTaskHeartbeatsRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string namespace */ 1:
+                    message.namespace = reader.string();
+                    break;
+                case /* string identity */ 2:
+                    message.identity = reader.string();
+                    break;
+                case /* repeated orcher.v1.TaskHeartbeatEntry heartbeats */ 3:
+                    message.heartbeats.push(TaskHeartbeatEntry.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: RecordTaskHeartbeatsRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string namespace = 1; */
+        if (message.namespace !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.namespace);
+        /* string identity = 2; */
+        if (message.identity !== "")
+            writer.tag(2, WireType.LengthDelimited).string(message.identity);
+        /* repeated orcher.v1.TaskHeartbeatEntry heartbeats = 3; */
+        for (let i = 0; i < message.heartbeats.length; i++)
+            TaskHeartbeatEntry.internalBinaryWrite(message.heartbeats[i], writer.tag(3, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.RecordTaskHeartbeatsRequest
+ */
+export const RecordTaskHeartbeatsRequest = new RecordTaskHeartbeatsRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class TaskHeartbeatEntry$Type extends MessageType<TaskHeartbeatEntry> {
+    constructor() {
+        super("orcher.v1.TaskHeartbeatEntry", [
+            { no: 1, name: "task_token", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 2, name: "details", kind: "scalar", T: 12 /*ScalarType.BYTES*/ }
+        ]);
+    }
+    override create(value?: PartialMessage<TaskHeartbeatEntry>): TaskHeartbeatEntry {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.taskToken = new Uint8Array(0);
+        message.details = new Uint8Array(0);
+        if (value !== undefined)
+            reflectionMergePartial<TaskHeartbeatEntry>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: TaskHeartbeatEntry): TaskHeartbeatEntry {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* bytes task_token */ 1:
+                    message.taskToken = reader.bytes();
+                    break;
+                case /* bytes details */ 2:
+                    message.details = reader.bytes();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: TaskHeartbeatEntry, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* bytes task_token = 1; */
+        if (message.taskToken.length)
+            writer.tag(1, WireType.LengthDelimited).bytes(message.taskToken);
+        /* bytes details = 2; */
+        if (message.details.length)
+            writer.tag(2, WireType.LengthDelimited).bytes(message.details);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.TaskHeartbeatEntry
+ */
+export const TaskHeartbeatEntry = new TaskHeartbeatEntry$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class RecordTaskHeartbeatsResponse$Type extends MessageType<RecordTaskHeartbeatsResponse> {
+    constructor() {
+        super("orcher.v1.RecordTaskHeartbeatsResponse", [
+            { no: 1, name: "answers", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => TaskHeartbeatAnswer }
+        ]);
+    }
+    override create(value?: PartialMessage<RecordTaskHeartbeatsResponse>): RecordTaskHeartbeatsResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.answers = [];
+        if (value !== undefined)
+            reflectionMergePartial<RecordTaskHeartbeatsResponse>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: RecordTaskHeartbeatsResponse): RecordTaskHeartbeatsResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* repeated orcher.v1.TaskHeartbeatAnswer answers */ 1:
+                    message.answers.push(TaskHeartbeatAnswer.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: RecordTaskHeartbeatsResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* repeated orcher.v1.TaskHeartbeatAnswer answers = 1; */
+        for (let i = 0; i < message.answers.length; i++)
+            TaskHeartbeatAnswer.internalBinaryWrite(message.answers[i], writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.RecordTaskHeartbeatsResponse
+ */
+export const RecordTaskHeartbeatsResponse = new RecordTaskHeartbeatsResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class TaskHeartbeatAnswer$Type extends MessageType<TaskHeartbeatAnswer> {
+    constructor() {
+        super("orcher.v1.TaskHeartbeatAnswer", [
+            { no: 1, name: "task_token", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 2, name: "cancel_requested", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
+            { no: 3, name: "refused_code", kind: "scalar", T: 5 /*ScalarType.INT32*/ },
+            { no: 4, name: "refused_message", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    override create(value?: PartialMessage<TaskHeartbeatAnswer>): TaskHeartbeatAnswer {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.taskToken = new Uint8Array(0);
+        message.cancelRequested = false;
+        message.refusedCode = 0;
+        message.refusedMessage = "";
+        if (value !== undefined)
+            reflectionMergePartial<TaskHeartbeatAnswer>(this, message, value!);
+        return message;
+    }
+    override internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: TaskHeartbeatAnswer): TaskHeartbeatAnswer {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* bytes task_token */ 1:
+                    message.taskToken = reader.bytes();
+                    break;
+                case /* bool cancel_requested */ 2:
+                    message.cancelRequested = reader.bool();
+                    break;
+                case /* int32 refused_code */ 3:
+                    message.refusedCode = reader.int32();
+                    break;
+                case /* string refused_message */ 4:
+                    message.refusedMessage = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    override internalBinaryWrite(message: TaskHeartbeatAnswer, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* bytes task_token = 1; */
+        if (message.taskToken.length)
+            writer.tag(1, WireType.LengthDelimited).bytes(message.taskToken);
+        /* bool cancel_requested = 2; */
+        if (message.cancelRequested !== false)
+            writer.tag(2, WireType.Varint).bool(message.cancelRequested);
+        /* int32 refused_code = 3; */
+        if (message.refusedCode !== 0)
+            writer.tag(3, WireType.Varint).int32(message.refusedCode);
+        /* string refused_message = 4; */
+        if (message.refusedMessage !== "")
+            writer.tag(4, WireType.LengthDelimited).string(message.refusedMessage);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message orcher.v1.TaskHeartbeatAnswer
+ */
+export const TaskHeartbeatAnswer = new TaskHeartbeatAnswer$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class RespondQueryTaskRequest$Type extends MessageType<RespondQueryTaskRequest> {
     constructor() {
@@ -3098,12 +3701,15 @@ export const RespondUpdateTaskResponse = new RespondUpdateTaskResponse$Type();
 export const ExecutionService = new ServiceType("orcher.v1.ExecutionService", [
     { name: "PollWorkflowExecution", options: {}, I: PollWorkflowExecutionRequest, O: PollWorkflowExecutionResponse },
     { name: "PollTaskExecution", options: {}, I: PollTaskExecutionRequest, O: PollTaskExecutionResponse },
+    { name: "PollWorkflowExecutions", options: {}, I: PollWorkflowExecutionsRequest, O: PollWorkflowExecutionsResponse },
+    { name: "PollTaskExecutions", options: {}, I: PollTaskExecutionsRequest, O: PollTaskExecutionsResponse },
     { name: "CompleteWorkflowExecution", options: {}, I: CompleteWorkflowExecutionRequest, O: CompleteWorkflowExecutionResponse },
     { name: "FailWorkflowExecution", options: {}, I: FailWorkflowExecutionRequest, O: FailWorkflowExecutionResponse },
     { name: "CompleteTaskExecution", options: {}, I: CompleteTaskExecutionRequest, O: CompleteTaskExecutionResponse },
     { name: "FailTaskExecution", options: {}, I: FailTaskExecutionRequest, O: FailTaskExecutionResponse },
     { name: "CancelTaskExecution", options: {}, I: CancelTaskExecutionRequest, O: CancelTaskExecutionResponse },
     { name: "RecordTaskHeartbeat", options: {}, I: RecordTaskHeartbeatRequest, O: RecordTaskHeartbeatResponse },
+    { name: "RecordTaskHeartbeats", options: {}, I: RecordTaskHeartbeatsRequest, O: RecordTaskHeartbeatsResponse },
     { name: "RespondQueryTask", options: {}, I: RespondQueryTaskRequest, O: RespondQueryTaskResponse },
     { name: "RespondUpdateTask", options: {}, I: RespondUpdateTaskRequest, O: RespondUpdateTaskResponse },
     { name: "ReleaseWorkflowExecution", options: {}, I: ReleaseWorkflowExecutionRequest, O: ReleaseWorkflowExecutionResponse },
