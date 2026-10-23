@@ -1,4 +1,4 @@
-//! The worker, as a binding over the shared worker host (`orcher-sdk-host`).
+//! The worker, as a binding over sdk-core's worker host.
 //!
 //! The host runs one worker's plumbing: core's workflow, task and actor
 //! drivers built from one configuration, the worker's registration and
@@ -6,7 +6,8 @@
 //! it when it has room to run some, runs it, and hands back the outcome.
 //!
 //! Messages cross as their protobuf encoding (`orcher.kernel.v1` and
-//! `orcher.host.v1`), decoded with protobuf-ts on the TypeScript side:
+//! `orcher.host.v1`), as the host's encoded view gives and takes them, and
+//! are decoded with protobuf-ts on the TypeScript side:
 //!
 //! - `hostNextActivation` / `hostCompleteActivation`: `RunActivation` and
 //!   `RunActivationResult`.
@@ -25,11 +26,10 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use serde::Deserialize;
 
-use orcher_sdk_core::proto::host::v1::{ActorResult, TaskOutcome};
-use orcher_sdk_core::proto::kernel::v1::{Payload, RunActivationResult};
-use orcher_sdk_core::proto::prost::Message;
-use orcher_sdk_core::transport::TlsConfig;
-use orcher_sdk_host::{ActorHandler, Host, HostConfig, Registrations, StateScope};
+use orcher_sdk_core::proto::kernel::v1::Payload;
+use orcher_sdk_core::{
+    ActorHandler, EncodedHost, Host, HostConfig, Registrations, StateScope, TlsConfig,
+};
 
 use crate::error_code::{tagged, tagged_as};
 use crate::runtime::{IntoJs, Runtime};
@@ -37,6 +37,8 @@ use crate::runtime::{IntoJs, Runtime};
 /// The running worker host JavaScript holds, boxed.
 pub struct HostHandle {
     host: Host,
+    /// The same host, giving and taking its messages encoded.
+    encoded: EncodedHost,
 }
 
 impl Finalize for HostHandle {}
@@ -223,9 +225,18 @@ fn host_arg(cx: &mut FunctionContext, index: usize) -> NeonResult<Host> {
     Ok(cx.argument::<JsBox<HostHandle>>(index)?.host.clone())
 }
 
-/// A message's protobuf decoding, or an `INVALID_ARGUMENT` error naming it.
-fn decode<M: Message + Default>(bytes: &[u8], what: &str) -> Result<M, String> {
-    M::decode(bytes).map_err(|e| tagged_as("INVALID_ARGUMENT", e, &format!("not a {what}")))
+/// The encoded host a handle argument names.
+fn encoded_arg(cx: &mut FunctionContext, index: usize) -> NeonResult<EncodedHost> {
+    Ok(cx.argument::<JsBox<HostHandle>>(index)?.encoded.clone())
+}
+
+/// A host's refusal of an answer: `INVALID_ARGUMENT` for bytes that are not
+/// the message, the error's own code otherwise.
+fn refused(error: orcher_sdk_core::Error, context: &str) -> String {
+    match error {
+        orcher_sdk_core::Error::Protocol(_) => tagged_as("INVALID_ARGUMENT", error, context),
+        error => tagged(&error, context),
+    }
 }
 
 /// `hostStart(configJson: string, registrationsJson: string): Promise<HostHandle>`
@@ -248,7 +259,8 @@ pub fn host_start(mut cx: FunctionContext) -> JsResult<JsPromise> {
         )
         .await
         .map_err(|e| tagged(&e, "the worker could not start"))?;
-        Ok(HostHandle { host })
+        let encoded = host.encoded();
+        Ok(HostHandle { host, encoded })
     })
 }
 
@@ -257,26 +269,21 @@ pub fn host_start(mut cx: FunctionContext) -> JsResult<JsPromise> {
 /// The next workflow activation, an encoded `RunActivation`; `null` once the
 /// worker has stopped and handed over every activation it took.
 pub fn host_next_activation(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
-    Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        Ok(host
-            .next_activation()
-            .await
-            .map(|activation| activation.encode_to_vec()))
-    })
+    let host = encoded_arg(&mut cx, 0)?;
+    Runtime::global()
+        .execute::<_, _, String>(&mut cx, async move { Ok(host.next_activation().await) })
 }
 
 /// `hostCompleteActivation(host, result: Uint8Array): Promise<void>`
 ///
 /// Answers an activation with an encoded `RunActivationResult`.
 pub fn host_complete_activation(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
+    let host = encoded_arg(&mut cx, 0)?;
     let bytes = bytes_arg(&mut cx, 1)?;
     Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        let answer: RunActivationResult = decode(&bytes, "RunActivationResult")?;
-        host.complete_activation(answer)
+        host.complete_activation(&bytes)
             .await
-            .map_err(|e| tagged(&e, "the activation's answer was not taken"))
+            .map_err(|e| refused(e, "the activation's answer was not taken"))
     })
 }
 
@@ -285,10 +292,8 @@ pub fn host_complete_activation(mut cx: FunctionContext) -> JsResult<JsPromise> 
 /// The next task, an encoded `TaskAssignment`; `null` once the worker has
 /// stopped and handed over every task it took.
 pub fn host_next_task(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
-    Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        Ok(host.next_task().await.map(|task| task.encode_to_vec()))
-    })
+    let host = encoded_arg(&mut cx, 0)?;
+    Runtime::global().execute::<_, _, String>(&mut cx, async move { Ok(host.next_task().await) })
 }
 
 /// `hostHeartbeat(host, token: Uint8Array, details?: Uint8Array): { cancelRequested: boolean }`
@@ -333,13 +338,12 @@ pub fn host_task_cancelled(mut cx: FunctionContext) -> JsResult<JsPromise> {
 ///
 /// Reports a task's outcome, an encoded `TaskOutcome`.
 pub fn host_complete_task(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
+    let host = encoded_arg(&mut cx, 0)?;
     let bytes = bytes_arg(&mut cx, 1)?;
     Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        let outcome: TaskOutcome = decode(&bytes, "TaskOutcome")?;
-        host.complete_task(outcome)
+        host.complete_task(&bytes)
             .await
-            .map_err(|e| tagged(&e, "the task's outcome was not taken"))
+            .map_err(|e| refused(e, "the task's outcome was not taken"))
     })
 }
 
@@ -348,12 +352,9 @@ pub fn host_complete_task(mut cx: FunctionContext) -> JsResult<JsPromise> {
 /// The next actor operation, an encoded `ActorOperation`; `null` once the
 /// worker has stopped.
 pub fn host_next_actor_operation(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
+    let host = encoded_arg(&mut cx, 0)?;
     Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        Ok(host
-            .next_actor_operation()
-            .await
-            .map(|operation| operation.encode_to_vec()))
+        Ok(host.next_actor_operation().await)
     })
 }
 
@@ -361,13 +362,12 @@ pub fn host_next_actor_operation(mut cx: FunctionContext) -> JsResult<JsPromise>
 ///
 /// Reports an actor operation's result, an encoded `ActorResult`.
 pub fn host_complete_actor_operation(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
+    let host = encoded_arg(&mut cx, 0)?;
     let bytes = bytes_arg(&mut cx, 1)?;
     Runtime::global().execute::<_, _, String>(&mut cx, async move {
-        let result: ActorResult = decode(&bytes, "ActorResult")?;
-        host.complete_actor_operation(result)
+        host.complete_actor_operation(&bytes)
             .await
-            .map_err(|e| tagged(&e, "the actor operation's result was not taken"))
+            .map_err(|e| refused(e, "the actor operation's result was not taken"))
     })
 }
 
@@ -521,14 +521,14 @@ mod tests {
         )
         .unwrap();
         let config = config.into_host_config().unwrap();
-        assert_eq!(config.server_url, "http://localhost:50051");
+        assert_eq!(config.connection.url, "http://localhost:50051");
         assert_eq!(config.task_queue, "orders");
-        assert_eq!(config.namespace, "shop");
+        assert_eq!(config.connection.namespace, "shop");
         assert_eq!(config.identity, "worker-1");
-        assert_eq!(config.api_key.as_deref(), Some("key"));
-        assert_eq!(config.organization_id.as_deref(), Some("org"));
+        assert_eq!(config.connection.api_key.as_deref(), Some("key"));
+        assert_eq!(config.connection.organization_id.as_deref(), Some("org"));
         assert_eq!(config.version_id.as_deref(), Some("v7"));
-        assert!(config.tls.is_none());
+        assert!(config.connection.tls.is_none());
         assert_eq!(
             (
                 config.max_concurrent_workflows,
@@ -593,7 +593,12 @@ mod tests {
             r#"{ "serverUrl": "https://x:1", "taskQueue": "q", "namespace": "n", "tls": {} }"#,
         )
         .unwrap();
-        let tls = config.into_host_config().unwrap().tls.expect("tls");
+        let tls = config
+            .into_host_config()
+            .unwrap()
+            .connection
+            .tls
+            .expect("tls");
         assert!(tls.ca_cert.is_none() && tls.client_cert.is_none());
     }
 

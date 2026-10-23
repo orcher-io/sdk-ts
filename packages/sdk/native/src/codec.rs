@@ -8,7 +8,7 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use neon::types::JsBuffer;
 
-use orcher_sdk_core::codec::{EncryptionPayloadCodec, GzipPayloadCodec, PayloadCodec};
+use orcher_sdk_core::payload::codec::{EncryptionPayloadCodec, GzipPayloadCodec, PayloadCodec};
 use orcher_sdk_core::payload::Payload;
 
 // ---------------------------------------------------------------------------

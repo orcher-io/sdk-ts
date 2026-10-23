@@ -17,17 +17,11 @@ crate-type = ["cdylib"]
 # Neon: Node.js N-API bindings for Rust.
 neon = { version = "1.0", default-features = false, features = ["napi-6", "futures"] }
 
-# Orcher SDK Core, from crates.io, with the protocol types it re-exports
-# (orcher_sdk_core::proto), so the build has one orcher-proto. To build
-# against local checkouts instead, see .cargo/config.example.toml.
-orcher-sdk-core = "0.19"
-# The worker host: one worker's drivers, lifecycle and registration, shared
-# with the Rust and Python SDKs. This crate binds it for TypeScript.
-orcher-sdk-host = "0.19"
-
-# gRPC
-tonic = { version = "0.12", features = ["transport", "tls", "tls-native-roots"] }
-prost-types = { version = "0.13" }
+# Orcher SDK Core, from crates.io: the kernel, the worker host and the
+# clients this crate binds for TypeScript, speaking encoded kernel and host
+# messages. To build against a local checkout instead, see
+# .cargo/config.example.toml.
+orcher-sdk-core = "0.20.1"
 
 # Async runtime
 tokio = { version = "1.35", features = ["rt", "rt-multi-thread", "macros", "sync"] }

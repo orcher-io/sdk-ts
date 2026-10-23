@@ -13,33 +13,19 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use orcher_sdk_core::proto::kernel::v1::RunActivationResult;
-use orcher_sdk_core::proto::orcher::v1::PollWorkflowExecutionResponse;
-use orcher_sdk_core::proto::prost::Message;
-use orcher_sdk_core::WorkflowExecutionTask;
-
-/// The workflow task a recorded activation (an encoded
-/// `orcher.v1.PollWorkflowExecutionResponse`) carries.
-fn recorded_task<'a>(
-    cx: &mut FunctionContext<'a>,
-    bytes: &[u8],
-) -> NeonResult<WorkflowExecutionTask> {
-    match PollWorkflowExecutionResponse::decode(bytes) {
-        Ok(response) => Ok(WorkflowExecutionTask::from(response)),
-        Err(e) => cx.throw_error(format!("not a recorded activation: {e}")),
-    }
-}
+use orcher_sdk_core::kernel::encoded;
 
 /// `kernelResolve(pollResponse: Buffer, namespace: string): Buffer`
 ///
-/// The activation's history resolved by the kernel, as an encoded
-/// `orcher.kernel.v1.RunActivation`.
+/// A recorded activation (an encoded `orcher.v1.PollWorkflowExecutionResponse`)
+/// resolved by the kernel, as an encoded `orcher.kernel.v1.RunActivation`.
 pub fn kernel_resolve(mut cx: FunctionContext) -> JsResult<JsBuffer> {
     let bytes = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
     let namespace = cx.argument::<JsString>(1)?.value(&mut cx);
-    let task = recorded_task(&mut cx, &bytes)?;
-    let activation = orcher_sdk_core::kernel::resolve(&task, &namespace);
-    JsBuffer::from_slice(&mut cx, &activation.encode_to_vec())
+    match encoded::resolve_recorded(&bytes, &namespace) {
+        Ok(activation) => JsBuffer::from_slice(&mut cx, &activation),
+        Err(e) => cx.throw_error(e.to_string()),
+    }
 }
 
 /// `kernelExecutionResult(runId: string, result: Buffer): string`
@@ -50,11 +36,7 @@ pub fn kernel_resolve(mut cx: FunctionContext) -> JsResult<JsBuffer> {
 pub fn kernel_execution_result(mut cx: FunctionContext) -> JsResult<JsString> {
     let run_id = cx.argument::<JsString>(0)?.value(&mut cx);
     let bytes = cx.argument::<JsBuffer>(1)?.as_slice(&cx).to_vec();
-    let answer = match RunActivationResult::decode(bytes.as_slice()) {
-        Ok(answer) => answer,
-        Err(e) => return cx.throw_error(format!("not a RunActivationResult: {e}")),
-    };
-    let result = match orcher_sdk_core::kernel::execution_result(&run_id, answer) {
+    let result = match encoded::execution_result(&run_id, &bytes) {
         Ok(result) => result,
         Err(e) => return cx.throw_error(e.to_string()),
     };
