@@ -5,52 +5,17 @@
 //! error classes reachable; without the prefix every failure would arrive as
 //! `ErrorCode.Unknown`.
 //!
-//! The code is derived from the error's *variant*, never from its text. sdk-core maps
-//! gRPC statuses onto semantic variants, so a "no such workflow" reaches here as
-//! `WorkflowNotFound` rather than an opaque status, and the tag is accurate rather than
-//! guessed.
+//! The code is sdk-core's, derived from the error's *variant*, never from its text:
+//! sdk-core maps refused calls onto semantic variants, so a "no such workflow" reaches
+//! here as `WorkflowNotFound` rather than an opaque status, and the tag is accurate
+//! rather than guessed.
 
 use orcher_sdk_core::error::Error as CoreError;
 
 /// The `ErrorCode` member this error corresponds to, in the spelling the
-/// TypeScript enum uses for its values.
+/// TypeScript enum uses for its values: sdk-core's own code for the error.
 pub fn code_for(error: &CoreError) -> &'static str {
-    match error {
-        // Workflow-scoped variants report the orchestration code, matching the
-        // Rust and Python SDKs. A bare gRPC NotFound (below) is not attributable
-        // to a workflow, so it keeps the transport spelling.
-        CoreError::WorkflowNotFound { .. } => "WORKFLOW_NOT_FOUND",
-        CoreError::WorkflowAlreadyExists { .. } => "WORKFLOW_ALREADY_EXISTS",
-        CoreError::WorkflowCancelled { .. } => "WORKFLOW_CANCELED",
-        CoreError::WorkflowTerminated { .. } => "WORKFLOW_TERMINATED",
-        CoreError::Timeout { .. } => "TIMEOUT",
-        CoreError::Transport(_) | CoreError::Connection(_) => "CONNECTION_FAILED",
-        CoreError::Authentication(_) => "UNAUTHENTICATED",
-        CoreError::Authorization(_) => "PERMISSION_DENIED",
-        CoreError::Configuration(_) | CoreError::InvalidPayload { .. } => "INVALID_ARGUMENT",
-        CoreError::Serialization(_) | CoreError::Deserialization(_) | CoreError::Codec(_) => {
-            "INTERNAL"
-        }
-        CoreError::GrpcStatus(status) => match status.code() {
-            tonic::Code::NotFound => "NOT_FOUND",
-            tonic::Code::AlreadyExists => "ALREADY_EXISTS",
-            tonic::Code::DeadlineExceeded => "TIMEOUT",
-            tonic::Code::Unavailable => "UNAVAILABLE",
-            tonic::Code::PermissionDenied => "PERMISSION_DENIED",
-            tonic::Code::Unauthenticated => "UNAUTHENTICATED",
-            tonic::Code::InvalidArgument => "INVALID_ARGUMENT",
-            tonic::Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
-            tonic::Code::FailedPrecondition => "FAILED_PRECONDITION",
-            tonic::Code::Aborted => "ABORTED",
-            tonic::Code::OutOfRange => "OUT_OF_RANGE",
-            tonic::Code::Unimplemented => "UNIMPLEMENTED",
-            tonic::Code::DataLoss => "DATA_LOSS",
-            _ => "INTERNAL",
-        },
-        // Anything without a distinct meaning stays UNKNOWN rather than being
-        // filed under a code that would mislead a caller matching on it.
-        _ => "UNKNOWN",
-    }
+    error.code().as_str()
 }
 
 /// Format an error for the JavaScript side: `[CODE] context: message`.

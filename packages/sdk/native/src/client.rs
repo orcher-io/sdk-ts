@@ -11,23 +11,14 @@ use neon::types::buffer::TypedArray;
 use crate::runtime::Runtime;
 
 use orcher_sdk_core::client::{
-    CancelWorkflowOpts, CoreActorClient, StartWorkflowOpts, WorkflowClient,
+    ActorClient, CancelWorkflowOpts, ConnectOptions, Connection, StartWorkflowOpts, WorkflowClient,
 };
 use orcher_sdk_core::types::{
     ListWorkflowsOptions, ListWorkflowsSortOrder, SearchWorkflowsOptions,
 };
 
 use crate::types::{get_optional_bool_property, get_optional_string_property, get_string_property};
-use orcher_sdk_core::poller::TlsConfig;
-use tonic::transport::Channel;
-
-/// Convert a millisecond duration to the proto `Duration` used in retry policies.
-fn ms_to_proto_duration(ms: i64) -> orcher_sdk_core::proto::prost_types::Duration {
-    orcher_sdk_core::proto::prost_types::Duration {
-        seconds: ms / 1000,
-        nanos: ((ms % 1000) * 1_000_000) as i32,
-    }
-}
+use orcher_sdk_core::TlsConfig;
 
 /// Read an optional numeric property from a JS object.
 fn get_number_property(
@@ -103,20 +94,24 @@ fn maximum_attempts(max_attempts: Option<f64>) -> i32 {
 fn parse_retry_policy(
     cx: &mut FunctionContext,
     options: Handle<JsObject>,
-) -> NeonResult<Option<orcher_sdk_core::proto::orcher::v1::RetryPolicy>> {
+) -> NeonResult<Option<orcher_sdk_core::WorkflowRetryPolicy>> {
     let rp_val: Handle<JsValue> = options.get(cx, "retryPolicy")?;
     let Ok(rp) = rp_val.downcast::<JsObject, _>(cx) else {
         return Ok(None);
     };
-    Ok(Some(orcher_sdk_core::proto::orcher::v1::RetryPolicy {
-        initial_interval: get_number_property(cx, rp, "initialInterval")?
-            .map(|ms| ms_to_proto_duration(ms as i64)),
+    let millis = |ms: f64| Duration::from_millis(ms.max(0.0) as u64);
+    Ok(Some(orcher_sdk_core::WorkflowRetryPolicy {
+        initial_interval: get_number_property(cx, rp, "initialInterval")?.map(millis),
         backoff_coefficient: get_number_property(cx, rp, "backoffCoefficient")?.unwrap_or(2.0),
-        maximum_interval: get_number_property(cx, rp, "maxInterval")?
-            .map(|ms| ms_to_proto_duration(ms as i64)),
-        maximum_attempts: maximum_attempts(get_number_property(cx, rp, "maxAttempts")?),
-        non_retryable_error_types: get_string_array_property(cx, rp, "nonRetryableErrorTypes")?,
-        ..Default::default()
+        max_interval: get_number_property(cx, rp, "maxInterval")?.map(millis),
+        // A negative count cannot be sent; it reads as unlimited, as 0 does.
+        max_attempts: u32::try_from(maximum_attempts(get_number_property(
+            cx,
+            rp,
+            "maxAttempts",
+        )?))
+        .unwrap_or(0),
+        non_retryable_errors: get_string_array_property(cx, rp, "nonRetryableErrorTypes")?,
     }))
 }
 
@@ -127,13 +122,17 @@ fn parse_retry_policy(
 /// The client handle JavaScript holds, boxed. Wraps sdk-core's `WorkflowClient`.
 pub struct ClientHandleType {
     client: WorkflowClient,
-    /// Server URL, used to open connections for actor invocations.
-    pub server_url: String,
+    /// Actor invocations, on the client's connection with its credentials
+    /// and TLS.
+    actors: ActorClient,
 }
 
 impl ClientHandleType {
-    fn new(client: WorkflowClient, server_url: String) -> Self {
-        Self { client, server_url }
+    fn new(connection: &Connection) -> Self {
+        Self {
+            client: connection.workflow_client(),
+            actors: connection.actor_client(),
+        }
     }
 
     fn client(&self) -> &WorkflowClient {
@@ -317,62 +316,33 @@ pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
 
     let tls_config = config.tls_config.clone();
 
+    let mut options = ConnectOptions::new(&server_url).with_namespace(&namespace);
+    if let Some(ref key) = api_key {
+        options = options.with_api_key(key);
+    }
+    let has_tls = tls_config.is_some();
+    if let Some(tls) = tls_config {
+        options = options.with_tls(tls);
+    }
+
     runtime.execute::<_, _, String>(&mut cx, async move {
-        let client = if let Some(ref tls) = tls_config {
-            // Without a custom CA, verify against the system trust store (for example,
-            // mTLS to a publicly trusted server).
-            let mut tls_cfg = match tls.ca_cert {
-                Some(ref ca) => tonic::transport::ClientTlsConfig::new()
-                    .ca_certificate(tonic::transport::Certificate::from_pem(ca)),
-                None => tonic::transport::ClientTlsConfig::new().with_native_roots(),
-            };
-
-            if let (Some(ref cert), Some(ref key)) = (&tls.client_cert, &tls.client_key) {
-                let identity = tonic::transport::Identity::from_pem(cert, key);
-                tls_cfg = tls_cfg.identity(identity);
-            }
-
-            if let Some(ref domain) = tls.domain_name {
-                tls_cfg = tls_cfg.domain_name(domain.clone());
-            }
-
-            let endpoint = tonic::transport::Endpoint::from_shared(server_url.clone())
-                .map_err(|e| {
-                    crate::error_code::tagged_as("CONNECTION_FAILED", e, "Invalid server URL")
-                })?
-                .tls_config(tls_cfg)
-                .map_err(|e| {
-                    crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS configuration error")
-                })?
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(180));
-
-            let channel = endpoint.connect().await.map_err(|e| {
-                crate::error_code::tagged_as("CONNECTION_FAILED", e, "TLS connection failed")
-            })?;
-
-            WorkflowClient::from_channel(channel).with_namespace(&namespace)
+        // With a `tls` block the connection is made now, so a certificate
+        // the server refuses fails here; without, on the first call.
+        let connection = if has_tls {
+            Connection::connect(options).await
         } else {
-            WorkflowClient::connect(&server_url)
-                .await
-                .map_err(|e| crate::error_code::tagged(&e, "Client connection failed"))?
-                .with_namespace(&namespace)
-        };
-
-        // Attach the API key here so every request from this client carries it.
-        let client = match api_key {
-            Some(ref key) => client.with_api_key(key.clone()),
-            None => client,
-        };
+            Connection::lazy(options)
+        }
+        .map_err(|e| crate::error_code::tagged(&e, "Client connection failed"))?;
 
         tracing::info!(
             "Connected to ORCHER server: {} (namespace: {}, tls: {})",
             server_url,
             namespace,
-            tls_config.is_some()
+            has_tls
         );
 
-        Ok(ClientHandleType::new(client, server_url))
+        Ok(ClientHandleType::new(&connection))
     })
 }
 
@@ -458,7 +428,7 @@ pub fn start_workflow(mut cx: FunctionContext) -> JsResult<JsPromise> {
     // would be a silent no-op.
     let policy_value: Handle<JsValue> = options.get(&mut cx, "workflowIdReusePolicy")?;
     let id_reuse_policy = if policy_value.is_a::<JsString, _>(&mut cx) {
-        use orcher_sdk_core::proto::orcher::v1::WorkflowIdReusePolicy as Policy;
+        use orcher_sdk_core::WorkflowIdReusePolicy as Policy;
         let name = policy_value
             .downcast::<JsString, _>(&mut cx)
             .unwrap()
@@ -1197,8 +1167,7 @@ pub fn close(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
 /// Invoke an actor operation from a client and wait for its result.
 ///
-/// Opens a channel to the client's server URL and calls sdk-core's `CoreActorClient`,
-/// which wraps `ActorServiceClient`.
+/// The call goes out on the client's connection, with its credentials and TLS.
 ///
 /// JavaScript signature:
 /// ```typescript
@@ -1219,25 +1188,15 @@ pub fn client_invoke_actor_operation(mut cx: FunctionContext) -> JsResult<JsProm
     let payload_buf = cx.argument::<JsBuffer>(4)?;
     let payload = payload_buf.as_slice(&cx).to_vec();
 
-    let server_url = client_box.server_url.clone();
+    let actors = client_box.actors.clone();
 
     let runtime = Runtime::global();
 
     runtime.execute::<_, _, String>(&mut cx, async move {
-        let channel = Channel::from_shared(server_url)
-            .map_err(|e| format!("Invalid server URL: {}", e))?
-            .connect()
-            .await
-            .map_err(|e| format!("Failed to connect for actor invoke: {}", e))?;
-
-        let actor_client = CoreActorClient::new(channel);
-
-        let result = actor_client
+        actors
             .invoke_operation(actor_name, key, operation, payload, None, None)
             .await
-            .map_err(|e| format!("Actor invoke failed: {}", e))?;
-
-        Ok(result)
+            .map_err(|e| crate::error_code::tagged(&e, "Actor invoke failed"))
     })
 }
 
