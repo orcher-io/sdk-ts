@@ -21,7 +21,7 @@ neon = { version = "1.0", default-features = false, features = ["napi-6", "futur
 # clients this crate binds for TypeScript, speaking encoded kernel and host
 # messages. To build against a local checkout instead, see
 # .cargo/config.example.toml.
-orcher-sdk-core = "0.21"
+orcher-sdk-core = "0.22"
 
 # Async runtime
 tokio = { version = "1.35", features = ["rt", "rt-multi-thread", "macros", "sync"] }
