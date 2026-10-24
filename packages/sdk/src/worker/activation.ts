@@ -54,6 +54,7 @@ import {
   SendEvent,
   StartChild,
   StartTimer,
+  StepIdScheme,
   UpdateAnswer,
   type Resolution,
   type RunActivation,
@@ -178,6 +179,23 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
     // activation that records none starts it now.
     startedAt ? millis(startedAt) : Date.now()
   );
+  // A run the engine bound to the kernel's step-id scheme: its steps are
+  // named the kernel's way and its random values come from the kernel's
+  // generator, seeded from its history lineage.
+  if (started?.stepIds === StepIdScheme.KERNEL) {
+    if (!started.historyLineage) {
+      throw new ProtocolRefusal(
+        "the run is under the kernel's step-id scheme but has no history lineage"
+      );
+    }
+    if (started.randomSeed.length !== 32) {
+      throw new ProtocolRefusal(
+        `the run is under the kernel's step-id scheme but its random seed is ` +
+          `${started.randomSeed.length} bytes, not 32`
+      );
+    }
+    context.bindKernelScheme(started.historyLineage, started.randomSeed);
+  }
 
   // When each outcome was recorded, and where it comes in the order the run
   // observes its outcomes, keyed as the context holds it: the first outcome
@@ -498,13 +516,33 @@ function stepOf(command: any): ReachedStep | undefined {
   }
 }
 
+/**
+ * The call number a step id under the kernel's scheme was made from (`task-3`
+ * is call 3), so the call reaches the kernel numbered as it was named; 0 for
+ * an id of this SDK's own, which the kernel does not derive from the number.
+ */
+function kernelSequence(kind: string, stepId: string): number {
+  const match = new RegExp(`^${kind}-(\\d+)$`).exec(stepId);
+  return match ? Number(match[1]) : 0;
+}
+
 /** A call answered from history: its kind and id, no payloads. */
 function satisfied(step: ReachedStep): Command {
   switch (step.kind) {
     case 'task':
-      return call(0, step.id, { oneofKind: 'runTask', runTask: RunTask.create() }, true);
+      return call(
+        kernelSequence('task', step.id),
+        step.id,
+        { oneofKind: 'runTask', runTask: RunTask.create() },
+        true
+      );
     case 'timer':
-      return call(0, step.id, { oneofKind: 'startTimer', startTimer: StartTimer.create() }, true);
+      return call(
+        kernelSequence('timer', step.id),
+        step.id,
+        { oneofKind: 'startTimer', startTimer: StartTimer.create() },
+        true
+      );
     case 'child':
       return call(
         0,
@@ -585,7 +623,7 @@ function kernelCommand(command: any): Command {
         }),
       });
     case WorkflowCommandType.RECORD_STEP_RESULT:
-      return call(0, command.stepName, {
+      return call(seq, command.stepName, {
         oneofKind: 'recordValue',
         recordValue: RecordValue.create({
           outcome: Outcome.create({
@@ -599,7 +637,7 @@ function kernelCommand(command: any): Command {
         }),
       });
     case WorkflowCommandType.WAIT_FOR_EVENT:
-      return call(0, command.stepId, {
+      return call(seq, command.stepId, {
         oneofKind: 'awaitEvent',
         awaitEvent: AwaitEvent.create({
           name: command.eventName,

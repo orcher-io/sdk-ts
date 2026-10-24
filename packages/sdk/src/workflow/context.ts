@@ -393,7 +393,14 @@ export class WorkflowContext {
   private readonly _version: string;
 
   /** Deterministic random helper (property access) */
-  private readonly _random: WorkflowRandom;
+  private _random: WorkflowRandom;
+  /**
+   * The run's history lineage, for a run the engine bound to the kernel's
+   * step-id scheme: its calls are named the kernel's way and its children
+   * without an id from the lineage. Unset for a run under this SDK's own
+   * scheme.
+   */
+  private kernelLineage?: string;
 
   /** The workflow's clock, read from the journal (property access) */
   private readonly _time: WorkflowTime;
@@ -598,7 +605,7 @@ export class WorkflowContext {
     // not, so the ids of the steps after it do not depend on whether it had
     // already completed.
     const sequence = this.nextSequence();
-    const taskId = `${taskName}_${sequence}`;
+    const taskId = this.stepIdFor('task', sequence, `${taskName}_${sequence}`);
     this.reachStep(taskId, 'task');
     this.cancellationFor(taskId);
 
@@ -726,7 +733,7 @@ export class WorkflowContext {
     // One number on every path, cached or not, like every other step.
     const sequence = this.nextSequence();
     const sessionId = `session_${sequence}`;
-    const taskId = `${SESSION_CREATE_TASK}_${sequence}`;
+    const taskId = this.stepIdFor('task', sequence, `${SESSION_CREATE_TASK}_${sequence}`);
     this.reachStep(taskId, 'task');
     this.cancellationFor(taskId);
 
@@ -810,7 +817,7 @@ export class WorkflowContext {
     // shift the id of every later step once the closure's result was in the
     // journal, and two runs of one name (a loop) would share one result.
     const sequence = this.nextSequence();
-    const stepId = `${stepName}_${sequence}`;
+    const stepId = this.stepIdFor('value', sequence, `${stepName}_${sequence}`);
 
     // A journaled result means the closure already ran.
     if (this.state.pendingTaskResults.has(stepId)) {
@@ -892,7 +899,11 @@ export class WorkflowContext {
     // Derive a deterministic id from the step sequence (timer_{sequence}), so it
     // is stable across replays and correlates to the engine's fired-timer event.
     const sequence = this.nextSequence();
-    return this.emitTimer(`timer_${sequence}`, sequence, duration.toMilliseconds());
+    return this.emitTimer(
+      this.stepIdFor('timer', sequence, `timer_${sequence}`),
+      sequence,
+      duration.toMilliseconds()
+    );
   }
 
   /**
@@ -919,7 +930,9 @@ export class WorkflowContext {
       throw new Error('sleepWithId() requires a non-negative duration');
     }
     const sequence = this.nextSequence();
-    return this.emitTimer(timerId, sequence, durationMs);
+    // Under the kernel's step-id scheme the kernel names the timer, not the id
+    // given.
+    return this.emitTimer(this.stepIdFor('timer', sequence, timerId), sequence, durationMs);
   }
 
   /** Waits issued per event name in this activation, for deadline timer ids. */
@@ -1021,7 +1034,7 @@ export class WorkflowContext {
     // overrides it, to address the child by a known ID; the sequence is still
     // consumed so ordering stays stable.
     const sequence = this.nextSequence();
-    const workflowId = options?.workflowId || `child_${sequence}`;
+    const workflowId = options?.workflowId || this.defaultChildId(sequence);
     this.reachStep(workflowId, 'child');
 
     // Emit StartChildWorkflow unless the child has already completed, in which
@@ -1128,7 +1141,7 @@ export class WorkflowContext {
     // executeChildWorkflow and the Rust and Python SDKs. runId is derived from
     // it (informational only) so it does not consume values from ctx.random.
     const sequence = this.nextSequence();
-    const workflowId = options?.workflowId || `child_${sequence}`;
+    const workflowId = options?.workflowId || this.defaultChildId(sequence);
     this.reachStep(workflowId, 'child');
     const runId = `run_${workflowId}`;
 
@@ -1523,6 +1536,9 @@ export class WorkflowContext {
    */
   async waitForEvent<T = any>(eventName: string): Promise<T> {
     EventHelpers.validateEventName(eventName);
+    // Under the kernel's step-id scheme a wait is a durable call like any
+    // other, and takes its number on every path, found or parked.
+    const kernelSequence = this.kernelLineage === undefined ? undefined : this.nextSequence();
 
     // The oldest event of this name is received if it came before any
     // cancellation request; otherwise the request is delivered here.
@@ -1544,12 +1560,12 @@ export class WorkflowContext {
     // it takes no number from the step counter on any path. If parking took
     // one and finding the event did not, a step issued beside the wait would
     // get another id once the event had arrived. The sequence only labels the
-    // command.
-    const sequence = this.state.sequence;
+    // command. Under the kernel's step-id scheme it took its own number above.
+    const sequence = kernelSequence ?? this.state.sequence;
     this.addCommand({
       type: WorkflowCommandType.WAIT_FOR_EVENT,
       sequence,
-      stepId: `event_${eventName}_${sequence}`,
+      stepId: this.stepIdFor('await', sequence, `event_${eventName}_${sequence}`),
       eventName,
     } as any);
 
@@ -1610,7 +1626,17 @@ export class WorkflowContext {
     // time out for no reason. It is deliberately not the step sequence: a
     // wait takes no number from the step counter on any path (see
     // `waitForEvent`).
-    const timerId = this.eventTimeoutTimerId(eventName);
+    //
+    // Under the kernel's step-id scheme the wait and its deadline timer are two
+    // durable calls, each taking its number on every path, and the timer is
+    // named by its number like any other.
+    const kernelSequences =
+      this.kernelLineage === undefined
+        ? undefined
+        : { wait: this.nextSequence(), timer: this.nextSequence() };
+    const timerId = kernelSequences
+      ? this.stepIdFor('timer', kernelSequences.timer, '')
+      : this.eventTimeoutTimerId(eventName);
     // Reached on every path, whichever of the event and the deadline wins:
     // the journal holds this timer whenever an earlier activation parked here.
     this.reachStep(timerId, 'timer');
@@ -1658,19 +1684,19 @@ export class WorkflowContext {
     // The timer is not canceled when the event wins; the engine's cancel only
     // journals the cancellation and the timer fires anyway, which costs one
     // harmless extra replay and nothing else.
-    // The sequence fields only label the commands; the counter is not
-    // advanced (see `waitForEvent`).
-    const sequence = this.state.sequence;
+    // Under this SDK's own scheme the sequence fields only label the commands;
+    // the counter is not advanced (see `waitForEvent`).
+    const sequence = kernelSequences?.wait ?? this.state.sequence;
     this.addCommand({
       type: WorkflowCommandType.WAIT_FOR_EVENT,
       sequence,
-      stepId: `event_${eventName}_${sequence}`,
+      stepId: this.stepIdFor('await', sequence, `event_${eventName}_${sequence}`),
       eventName,
       timeoutMs,
     } as any);
     const timerCommand: StartTimerCommand = {
       type: WorkflowCommandType.START_TIMER,
-      sequence,
+      sequence: kernelSequences?.timer ?? sequence,
       timerId,
       durationMs: timeoutMs,
     };
@@ -1820,6 +1846,36 @@ export class WorkflowContext {
    */
   private nextSequence(): number {
     return this.state.sequence++;
+  }
+
+  /**
+   * Runs the context under the kernel's step-id scheme: steps named the
+   * kernel's way, random values from the kernel's generator seeded with
+   * `seed`. The worker calls it before the workflow runs.
+   *
+   * @internal
+   */
+  bindKernelScheme(lineage: string, seed: Uint8Array): void {
+    this.kernelLineage = lineage;
+    this._random = WorkflowRandom.fromKernelSeed(this.execution.workflowId, seed);
+  }
+
+  /**
+   * The id of a step of `kind` (`task`, `timer`, `value`, `await`) made by the
+   * call numbered `sequence`: the kernel's, `{kind}-{sequence}`, for a run
+   * under its scheme, `own` otherwise.
+   *
+   * @internal
+   */
+  stepIdFor(kind: string, sequence: number, own: string): string {
+    return this.kernelLineage === undefined ? own : `${kind}-${sequence}`;
+  }
+
+  /** The id of a child started without one, by the call numbered `sequence`. */
+  private defaultChildId(sequence: number): string {
+    return this.kernelLineage === undefined
+      ? `child_${sequence}`
+      : `${this.kernelLineage}-child-${sequence}`;
   }
 
   /**

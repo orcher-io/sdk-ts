@@ -1,13 +1,14 @@
 /**
  * Deterministic random values for workflows.
  *
- * Every value is derived from the workflow ID and a per-context counter, so a
- * replay produces the same values in the same order.
+ * Every value is derived from the run and the order of the calls, so a replay
+ * produces the same values in the same order.
  *
  * @packageDocumentation
  */
 
 import { createHash } from 'crypto';
+import { RunRandom } from './kernel-random';
 
 /**
  * Deterministic random helper for workflows, available as `ctx.random`.
@@ -16,9 +17,12 @@ import { createHash } from 'crypto';
  * same decisions as the original run. `Math.random()` would return different
  * values on replay; this helper returns the same sequence every time.
  *
- * Each call hashes the workflow ID together with an internal counter (SHA-256)
- * and then increments the counter. The same workflow ID and the same sequence
- * of calls therefore always yield the same values.
+ * A run under the kernel's step-id scheme (every run a current worker starts)
+ * draws from the kernel's generator, seeded from the run's history lineage: a
+ * reset run draws the same values, and any SDK draws the same ones for the
+ * run. A run this SDK started before then hashes the workflow ID together with
+ * an internal counter (SHA-256) for each call. Either way the same run and the
+ * same sequence of calls always yield the same values.
  *
  * @example
  * Basic usage:
@@ -54,6 +58,24 @@ import { createHash } from 'crypto';
 export class WorkflowRandom {
   private counter: number = 0;
   private readonly seed: string;
+  /**
+   * Set for a run under the kernel's step-id scheme: the kernel's generator,
+   * seeded from the run's history lineage, whose values any SDK draws for
+   * the run.
+   */
+  private kernel?: RunRandom;
+
+  /**
+   * The source of a run under the kernel's step-id scheme, from the seed its
+   * start carries.
+   *
+   * @internal
+   */
+  static fromKernelSeed(workflowId: string, seed: Uint8Array): WorkflowRandom {
+    const source = new WorkflowRandom(workflowId);
+    source.kernel = new RunRandom(seed);
+    return source;
+  }
 
   /**
    * Creates a helper seeded by a workflow ID.
@@ -114,6 +136,10 @@ export class WorkflowRandom {
    * ```
    */
   uuid(): string {
+    if (this.kernel) {
+      this.counter++;
+      return this.kernel.uuid();
+    }
     const randomBytes = this.generateBytes(16);
 
     // Set version (4) and variant (RFC4122)
@@ -162,6 +188,10 @@ export class WorkflowRandom {
    * ```
    */
   random(): number {
+    if (this.kernel) {
+      this.counter++;
+      return this.kernel.nextF64();
+    }
     const bytes = this.generateBytes(4);
     const value = bytes.reduce((acc, byte, i) => acc + byte * Math.pow(256, i), 0);
     const maxValue = Math.pow(256, 4);
@@ -198,6 +228,10 @@ export class WorkflowRandom {
     }
     if (min > max) {
       throw new Error(`randomRange: min (${min}) cannot be greater than max (${max})`);
+    }
+    if (this.kernel) {
+      this.counter++;
+      return Number(this.kernel.range(BigInt(min), BigInt(max) + 1n));
     }
     if (min === max) {
       return min;
@@ -254,6 +288,10 @@ export class WorkflowRandom {
     if (items.length === 0) {
       throw new Error('choose requires a non-empty array');
     }
+    if (this.kernel) {
+      this.counter++;
+      return items[Number(this.kernel.below(BigInt(items.length)))]!;
+    }
     if (items.length === 1) {
       return items[0]!;
     }
@@ -301,6 +339,11 @@ export class WorkflowRandom {
 
     // Shuffle a copy so the caller's array is left untouched.
     const result = [...items];
+    if (this.kernel) {
+      this.counter++;
+      this.kernel.shuffle(result);
+      return result;
+    }
 
     // Fisher-Yates
     for (let i = result.length - 1; i > 0; i--) {

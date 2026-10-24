@@ -172,7 +172,14 @@ impl ConfigJson {
             // A workflow failure is marked non-retryable only when the
             // workflow code raised it so (`answerActivation` in
             // `src/worker/activation.ts`).
-            .with_protocol_version(orcher_sdk_core::worker_protocol::WORKFLOW_FAILURE_RETRYABILITY);
+            .with_protocol_version(orcher_sdk_core::worker_protocol::WORKFLOW_FAILURE_RETRYABILITY)
+            // New runs take the kernel's step ids, random values and child
+            // ids (`src/worker/activation.ts`); runs this SDK started before
+            // keep its own.
+            .with_step_ids([
+                orcher_sdk_core::StepIdScheme::Kernel,
+                orcher_sdk_core::StepIdScheme::TypescriptV0,
+            ]);
         if let Some(identity) = self.identity {
             config = config.with_identity(identity);
         }
