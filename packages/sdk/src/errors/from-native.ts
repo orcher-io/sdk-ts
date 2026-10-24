@@ -141,6 +141,8 @@ export function wrapWorkflowResultError(
       return new WorkflowCanceledError(outcome, cause);
     case ErrorCode.WORKFLOW_TERMINATED:
       return new WorkflowTerminatedError(outcome, cause);
+    case ErrorCode.WORKFLOW_TIMEOUT:
+      return new WorkflowTimedOutError(outcome, cause);
     case ErrorCode.WORKFLOW_EXECUTION_FAILED:
       break;
     default:

@@ -271,52 +271,6 @@ fn json_value_to_js<'a, C: Context<'a>>(
     }
 }
 
-/// Convert a JavaScript value to a `serde_json::Value`.
-///
-/// `null` and `undefined` become `null`. Objects contribute their own property names only.
-/// Throws for values with no JSON form, such as functions and symbols.
-pub fn js_value_to_json<'a, C: Context<'a>>(
-    cx: &mut C,
-    value: Handle<'a, JsValue>,
-) -> NeonResult<serde_json::Value> {
-    if value.is_a::<JsNull, _>(cx) || value.is_a::<JsUndefined, _>(cx) {
-        Ok(serde_json::Value::Null)
-    } else if value.is_a::<JsBoolean, _>(cx) {
-        let b = value.downcast::<JsBoolean, _>(cx).or_throw(cx)?;
-        Ok(serde_json::Value::Bool(b.value(cx)))
-    } else if value.is_a::<JsNumber, _>(cx) {
-        let n = value.downcast::<JsNumber, _>(cx).or_throw(cx)?;
-        let num = n.value(cx);
-        Ok(serde_json::json!(num))
-    } else if value.is_a::<JsString, _>(cx) {
-        let s = value.downcast::<JsString, _>(cx).or_throw(cx)?;
-        Ok(serde_json::Value::String(s.value(cx)))
-    } else if value.is_a::<JsArray, _>(cx) {
-        let arr = value.downcast::<JsArray, _>(cx).or_throw(cx)?;
-        let len = arr.len(cx);
-        let mut vec = Vec::with_capacity(len as usize);
-        for i in 0..len {
-            let item = arr.get(cx, i)?;
-            vec.push(js_value_to_json(cx, item)?);
-        }
-        Ok(serde_json::Value::Array(vec))
-    } else if value.is_a::<JsObject, _>(cx) {
-        let obj = value.downcast::<JsObject, _>(cx).or_throw(cx)?;
-        let keys = obj.get_own_property_names(cx)?;
-        let len = keys.len(cx);
-        let mut map = serde_json::Map::new();
-        for i in 0..len {
-            let key: Handle<JsValue> = keys.get(cx, i)?;
-            let key_str = key.downcast::<JsString, _>(cx).or_throw(cx)?.value(cx);
-            let value = obj.get(cx, key)?;
-            map.insert(key_str, js_value_to_json(cx, value)?);
-        }
-        Ok(serde_json::Value::Object(map))
-    } else {
-        cx.throw_error("Unsupported JavaScript type for JSON conversion")
-    }
-}
-
 /// Returns bytes to JavaScript as a Node.js `Buffer`, which is a `Uint8Array`.
 impl IntoJs for Vec<u8> {
     fn into_js<'a, C: Context<'a>>(self, cx: &mut C) -> JsResult<'a, JsValue> {

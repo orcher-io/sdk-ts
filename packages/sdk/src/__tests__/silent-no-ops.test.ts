@@ -28,9 +28,7 @@ import type { NativeWorkflowStartOptions as CoreWorkflowStartOptions } from '../
 // ---------------------------------------------------------------------------
 
 const mockNative = {
-  workflowHandleCancel: jest.fn(),
-  workflowHandleTerminate: jest.fn(),
-  workflowHandleReset: jest.fn(),
+  clientCall: jest.fn(),
 };
 
 jest.mock('../core/native', () => ({
@@ -41,36 +39,42 @@ jest.mock('../core/native', () => ({
 import { WorkflowHandle } from '../client/workflow-handle';
 import { Client } from '../client/client';
 import { Worker } from '../worker/worker';
+import {
+  answer,
+  done,
+  ErrorCode,
+  refusal,
+  sentCall,
+} from '../client/__tests__/support/client-call';
 
 const makeHandle = () => new WorkflowHandle({} as never, 'wf-1', 'run-1');
 
 describe('handle operations are awaited (no fire-and-forget)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockNative.workflowHandleCancel.mockResolvedValue(undefined);
-    mockNative.workflowHandleTerminate.mockResolvedValue(undefined);
+    mockNative.clientCall.mockResolvedValue(done());
   });
 
-  it('cancel() rejects when the native call rejects', async () => {
-    mockNative.workflowHandleCancel.mockRejectedValue(new Error('server said no'));
+  it('cancel() rejects when the engine refuses it', async () => {
+    mockNative.clientCall.mockResolvedValue(refusal(ErrorCode.UNAVAILABLE, 'server said no'));
 
     await expect(makeHandle().cancel()).rejects.toThrow(/server said no/);
   });
 
-  it('terminate() rejects when the native call rejects', async () => {
-    mockNative.workflowHandleTerminate.mockRejectedValue(new Error('server said no'));
+  it('terminate() rejects when the engine refuses it', async () => {
+    mockNative.clientCall.mockResolvedValue(refusal(ErrorCode.UNAVAILABLE, 'server said no'));
 
     await expect(makeHandle().terminate('because')).rejects.toThrow(/server said no/);
   });
 
-  it('cancel() resolves only after the native call settles', async () => {
+  it('cancel() resolves only after the call settles', async () => {
     let settled = false;
-    mockNative.workflowHandleCancel.mockImplementation(
+    mockNative.clientCall.mockImplementation(
       () =>
-        new Promise<void>((resolve) =>
+        new Promise<Uint8Array>((resolve) =>
           setImmediate(() => {
             settled = true;
-            resolve();
+            resolve(done());
           })
         )
     );
@@ -81,27 +85,35 @@ describe('handle operations are awaited (no fire-and-forget)', () => {
   });
 });
 
-describe('reset() reaches the native binding', () => {
+describe('reset() reaches the engine', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns the new execution id from the native call', async () => {
-    mockNative.workflowHandleReset.mockResolvedValue('exec-new-42');
+  it('returns the new execution id the engine answered', async () => {
+    mockNative.clientCall.mockResolvedValue(
+      answer({ oneofKind: 'resetTo', resetTo: { workflowId: 'wf-1', runId: 'exec-new-42' } })
+    );
 
     await expect(makeHandle().reset(5, 'bad deploy')).resolves.toBe('exec-new-42');
-    expect(mockNative.workflowHandleReset).toHaveBeenCalledWith({}, 5, 'bad deploy');
+    const call = sentCall(mockNative.clientCall.mock.calls[0][1]).call;
+    expect(call.oneofKind).toBe('reset');
+    if (call.oneofKind === 'reset') {
+      expect(call.reset.eventId).toBe('5');
+      expect(call.reset.reason).toBe('bad deploy');
+      expect(call.reset.workflow).toEqual({ workflowId: 'wf-1', runId: 'run-1' });
+    }
   });
 
-  it('propagates a native failure instead of reporting success', async () => {
-    mockNative.workflowHandleReset.mockRejectedValue(new Error('event_id out of range'));
+  it('propagates a refusal instead of reporting success', async () => {
+    mockNative.clientCall.mockResolvedValue(
+      refusal(ErrorCode.INVALID_ARGUMENT, 'event_id out of range')
+    );
 
     await expect(makeHandle().reset(999)).rejects.toThrow(/event_id out of range/);
   });
 
-  it('never resolves to an empty id when the binding is missing', async () => {
-    // An optional call on an absent binding resolves to `undefined`, which must
-    // not be coerced to '' and returned as a successful reset.
-    mockNative.workflowHandleReset.mockImplementation(() => {
-      throw new TypeError('workflowHandleReset is not a function');
+  it('never resolves to an empty id when the call fails', async () => {
+    mockNative.clientCall.mockImplementation(() => {
+      throw new TypeError('clientCall is not a function');
     });
 
     await expect(makeHandle().reset(5)).rejects.toThrow();

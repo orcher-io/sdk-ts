@@ -3,13 +3,11 @@
  */
 
 import { ExecutionErrorCode, WorkflowHandle } from '../index';
-import { WorkflowHandle as CoreWorkflowHandle } from '../core/client';
 
 describe('public vocabulary', () => {
   it('sends events with sendEvent() alone', () => {
     expect('sendEvent' in WorkflowHandle.prototype).toBe(true);
     expect('signal' in WorkflowHandle.prototype).toBe(false);
-    expect('signal' in CoreWorkflowHandle.prototype).toBe(false);
   });
 
   it('names event errors as events', () => {

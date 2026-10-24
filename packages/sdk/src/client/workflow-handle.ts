@@ -6,14 +6,10 @@
 
 import { ClientError, TimeoutError } from '../core/errors';
 import { hasValidNameCharacters, NAME_RULE } from '../core/names';
-import {
-  isWorkflowOutcomeFailure,
-  wrapWorkflowError,
-  wrapWorkflowResultError,
-} from '../errors/from-native';
-import { getNativeModule } from '../core/native';
-import type { NativeWorkflowHandle, Disposable, WorkflowExecutionDescription } from '../core/types';
+import { wrapWorkflowError, wrapWorkflowResultError } from '../errors/from-native';
+import type { NativeClientHandle, Disposable, WorkflowExecutionDescription } from '../core/types';
 import { WorkflowStatus } from '../core/types';
+import * as protocol from './protocol';
 import type { CancelOptions } from './types';
 import { durationToMillis } from '../workflow/types';
 
@@ -40,9 +36,7 @@ class EventHelpers {
     }
 
     if (!hasValidNameCharacters(eventName)) {
-      throw new ClientError(
-        `Event name must contain only ${NAME_RULE}`
-      );
+      throw new ClientError(`Event name must contain only ${NAME_RULE}`);
     }
   }
 
@@ -85,10 +79,15 @@ export class WorkflowHandle<T = unknown> implements Disposable {
    * @internal
    */
   constructor(
-    private readonly native: NativeWorkflowHandle,
+    private readonly client: NativeClientHandle,
     public readonly workflowId: string,
     public readonly runId?: string
   ) {}
+
+  /** The workflow, and its run when the handle names one. */
+  private get ref(): { workflowId: string; runId: string } {
+    return { workflowId: this.workflowId, runId: this.runId ?? '' };
+  }
 
   /**
    * Wait for the workflow to complete and return its result.
@@ -115,34 +114,28 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     this.ensureNotDisposed();
 
     try {
-      const nativeModule = getNativeModule();
-      // The native module parses the JSON result, so it needs no further decoding.
-      const result = await nativeModule.workflowHandleGetResult(this.native);
-      return result as T;
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'waitForResult',
+          waitForResult: { workflow: this.ref },
+        }),
+        'result'
+      );
+      return protocol.decodeJson(answer.result.value) as T;
     } catch (err) {
-      throw await this.resultError(err);
+      throw this.resultError(err);
     }
   }
 
   /**
-   * The error for a failed wait on the result.
-   *
-   * The server answers a run that ended without a result with only a message,
-   * so the run's status is read to say how it ended. If that read fails too,
-   * the error is still a `WorkflowOutcomeError`, chosen from the message.
+   * The error for a failed wait on the result. A run that ended without a
+   * result is refused with how it ended, which picks the error's subclass.
    */
-  private async resultError(err: unknown): Promise<Error> {
+  private resultError(err: unknown): Error {
     const outcome = this.runId
       ? { workflowId: this.workflowId, runId: this.runId }
       : { workflowId: this.workflowId };
-    let status: string | undefined;
-    if (isWorkflowOutcomeFailure(err)) {
-      try {
-        status = await getNativeModule().workflowHandleGetStatus(this.native);
-      } catch {
-        status = undefined;
-      }
-    }
+    const status = err instanceof protocol.RefusedCall ? err.status : undefined;
     return wrapWorkflowResultError(err, outcome, status);
   }
 
@@ -183,7 +176,8 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
-        () => reject(new TimeoutError(`Timed out after ${timeoutMs}ms waiting for workflow result`)),
+        () =>
+          reject(new TimeoutError(`Timed out after ${timeoutMs}ms waiting for workflow result`)),
         timeoutMs
       );
     });
@@ -226,19 +220,14 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     this.ensureNotDisposed();
 
     try {
-      const nativeModule = getNativeModule();
-      const statusStr = await nativeModule.workflowHandleGetStatus(this.native);
-
-      const statusMap: Record<string, WorkflowStatus> = {
-        RUNNING: WorkflowStatus.Running,
-        COMPLETED: WorkflowStatus.Completed,
-        FAILED: WorkflowStatus.Failed,
-        CANCELLED: WorkflowStatus.Cancelled,
-        TERMINATED: WorkflowStatus.Terminated,
-        TIMED_OUT: WorkflowStatus.TimedOut,
-      };
-
-      return statusMap[statusStr] ?? WorkflowStatus.Unknown;
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'getStatus',
+          getStatus: { workflow: this.ref },
+        }),
+        'status'
+      );
+      return protocol.statusOf(answer.status) ?? WorkflowStatus.Unknown;
     } catch (err) {
       throw wrapWorkflowError(err, 'Failed to get workflow status', this.workflowId);
     }
@@ -264,10 +253,20 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     this.ensureNotDisposed();
 
     try {
-      const nativeModule = getNativeModule();
-      return await nativeModule.workflowHandleDescribe(this.native);
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'describe',
+          describe: { workflow: this.ref },
+        }),
+        'description'
+      );
+      return protocol.description(answer.description);
     } catch (err) {
-      throw wrapWorkflowError(err, `Failed to describe workflow ${this.workflowId}`, this.workflowId);
+      throw wrapWorkflowError(
+        err,
+        `Failed to describe workflow ${this.workflowId}`,
+        this.workflowId
+      );
     }
   }
 
@@ -302,11 +301,15 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     }
 
     try {
-      const nativeModule = getNativeModule();
-      await nativeModule.workflowHandleCancel(
-        this.native,
-        cleanupTimeout === undefined ? undefined : { cleanupTimeout }
-      );
+      await protocol.call(this.client, {
+        oneofKind: 'cancel',
+        cancel: {
+          workflow: this.ref,
+          ...(cleanupTimeout === undefined
+            ? {}
+            : { cleanupTimeout: protocol.duration(cleanupTimeout) }),
+        },
+      });
     } catch (err) {
       throw wrapWorkflowError(err, 'Failed to cancel workflow', this.workflowId);
     }
@@ -329,8 +332,10 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     this.ensureNotDisposed();
 
     try {
-      const nativeModule = getNativeModule();
-      await nativeModule.workflowHandleTerminate(this.native, reason);
+      await protocol.call(this.client, {
+        oneofKind: 'terminate',
+        terminate: { workflow: this.ref, reason: reason ?? '' },
+      });
     } catch (err) {
       throw wrapWorkflowError(err, 'Failed to terminate workflow', this.workflowId);
     }
@@ -357,8 +362,14 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     this.ensureNotDisposed();
 
     try {
-      const nativeModule = getNativeModule();
-      return await nativeModule.workflowHandleReset(this.native, targetEventId, reason);
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'reset',
+          reset: { workflow: this.ref, eventId: String(targetEventId), reason: reason ?? '' },
+        }),
+        'resetTo'
+      );
+      return answer.resetTo.runId;
     } catch (err) {
       throw wrapWorkflowError(err, 'Failed to reset workflow', this.workflowId);
     }
@@ -408,13 +419,19 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     try {
       EventHelpers.validateEventName(eventName);
 
-      const nativeModule = getNativeModule();
-      await nativeModule.workflowHandleSendEvent(this.native, eventName, payload);
+      await protocol.call(this.client, {
+        oneofKind: 'sendEvent',
+        sendEvent: { workflow: this.ref, eventName, payload: protocol.encodeJson(payload) },
+      });
     } catch (err) {
       if (err instanceof ClientError) {
         throw err;
       }
-      throw wrapWorkflowError(err, `Failed to send event '${eventName}' to workflow ${this.workflowId}`, this.workflowId);
+      throw wrapWorkflowError(
+        err,
+        `Failed to send event '${eventName}' to workflow ${this.workflowId}`,
+        this.workflowId
+      );
     }
   }
 
@@ -461,18 +478,23 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     try {
       EventHelpers.validateEventName(queryName);
 
-      const nativeModule = getNativeModule();
-      const result = await nativeModule.workflowHandleQuery(
-        this.native,
-        queryName,
-        args
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'query',
+          query: { workflow: this.ref, queryName, args: protocol.encodeJson(args) },
+        }),
+        'value'
       );
-      return result as TResult;
+      return protocol.decodeJson(answer.value) as TResult;
     } catch (err) {
       if (err instanceof ClientError) {
         throw err;
       }
-      throw wrapWorkflowError(err, `Failed to query workflow ${this.workflowId} with query '${queryName}'`, this.workflowId);
+      throw wrapWorkflowError(
+        err,
+        `Failed to query workflow ${this.workflowId} with query '${queryName}'`,
+        this.workflowId
+      );
     }
   }
 
@@ -506,18 +528,23 @@ export class WorkflowHandle<T = unknown> implements Disposable {
     try {
       EventHelpers.validateEventName(updateName);
 
-      const nativeModule = getNativeModule();
-      const result = await nativeModule.workflowHandleUpdate(
-        this.native,
-        updateName,
-        args
+      const answer = protocol.expect(
+        await protocol.call(this.client, {
+          oneofKind: 'update',
+          update: { workflow: this.ref, updateName, args: protocol.encodeJson(args) },
+        }),
+        'value'
       );
-      return result as TResult;
+      return protocol.decodeJson(answer.value) as TResult;
     } catch (err) {
       if (err instanceof ClientError) {
         throw err;
       }
-      throw wrapWorkflowError(err, `Failed to update workflow ${this.workflowId} with update '${updateName}'`, this.workflowId);
+      throw wrapWorkflowError(
+        err,
+        `Failed to update workflow ${this.workflowId} with update '${updateName}'`,
+        this.workflowId
+      );
     }
   }
 
@@ -527,7 +554,6 @@ export class WorkflowHandle<T = unknown> implements Disposable {
   dispose(): void {
     if (!this.disposed) {
       this.disposed = true;
-      // The native handle is freed by its Rust Drop implementation.
     }
   }
 

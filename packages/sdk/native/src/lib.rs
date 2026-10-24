@@ -88,10 +88,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     // Client
     cx.export_function("clientConnect", client::connect)?;
-    cx.export_function("clientStartWorkflow", client::start_workflow)?;
-    cx.export_function("clientGetWorkflowHandle", client::get_workflow_handle)?;
-    cx.export_function("clientListWorkflows", client::list_workflows)?;
-    cx.export_function("clientSearchWorkflows", client::search_workflows)?;
+    cx.export_function("clientCall", client::call)?;
     cx.export_function("clientClose", client::close)?;
 
     // The worker: a binding over the worker host. Work crosses as protobuf.
@@ -113,24 +110,6 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("hostActorStateKeys", host::host_actor_state_keys)?;
     cx.export_function("hostShutdown", host::host_shutdown)?;
     cx.export_function("hostWireMetrics", host::host_wire_metrics)?;
-
-    // Actors, client side
-    cx.export_function(
-        "clientInvokeActorOperation",
-        client::client_invoke_actor_operation,
-    )?;
-
-    // Workflow handles
-    cx.export_function("workflowHandleGetResult", client::get_workflow_result)?;
-    cx.export_function("workflowHandleCancel", client::cancel_workflow)?;
-    cx.export_function("workflowHandleTerminate", client::terminate_workflow)?;
-    cx.export_function("workflowHandleReset", client::reset_workflow)?;
-    cx.export_function("workflowHandleQuery", client::query_workflow)?;
-    cx.export_function("workflowHandleUpdate", client::update_workflow)?;
-    cx.export_function("workflowHandleSendEvent", client::send_event)?;
-    cx.export_function("workflowHandleGetStatus", client::get_status)?;
-    cx.export_function("workflowHandleDescribe", client::describe_workflow)?;
-    cx.export_function("workflowHandleRunId", client::workflow_handle_run_id)?;
 
     // Payload codecs
     cx.export_function("codecGzipCreate", codec::codec_gzip_create)?;

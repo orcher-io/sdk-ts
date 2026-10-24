@@ -27,6 +27,9 @@ import type { ActorRef } from './actor-ref';
 import type { WorkflowStartOptions, WorkflowHandleOptions } from './types';
 import { WorkflowIdReusePolicy } from './types';
 import { WorkflowHandle } from './workflow-handle';
+import * as protocol from './protocol';
+import { IdReusePolicy, ListOrder } from '../core/generated/client';
+import type { StartWorkflow } from '../core/generated/client';
 
 /**
  * Start options that are declared on {@link WorkflowStartOptions} but do not
@@ -67,6 +70,75 @@ function rejectUnsupportedStartOptions(options: WorkflowStartOptions): void {
 function optionalMillis(value: DurationInput | undefined): number | undefined {
   return value === undefined ? undefined : durationToMillis(value);
 }
+
+/** The attempts a retry policy allows when it leaves `maxAttempts` out, the
+ * first one included: the SDKs' documented default. */
+const DEFAULT_MAX_ATTEMPTS = 3;
+
+/**
+ * The start the options ask for. The deprecated timeout spellings of the
+ * native start options (`workflowTimeout`, `runTimeout`, `taskTimeout`) are
+ * still read, so a caller passing them is not silently ignored.
+ */
+function startMessage(
+  options: WorkflowStartOptions,
+  workflowId: string,
+  taskQueue: string
+): StartWorkflow {
+  const legacy = options as WorkflowStartOptions & {
+    workflowTimeout?: number;
+    runTimeout?: number;
+    taskTimeout?: number;
+  };
+  const executionTimeout =
+    optionalMillis(options.workflowExecutionTimeout) ?? legacy.workflowTimeout;
+  const runTimeout = optionalMillis(options.workflowRunTimeout) ?? legacy.runTimeout;
+  const taskTimeout = optionalMillis(options.workflowTaskTimeout) ?? legacy.taskTimeout;
+  const retry = options.retryPolicy;
+  const policy = options.workflowIdReusePolicy;
+  return {
+    workflowId,
+    workflowType: options.workflowType,
+    taskQueue,
+    // The first argument is sent as a plain JSON value, not wrapped in a
+    // Payload envelope, as in the Rust SDK.
+    input: protocol.encodeJson(options.args && options.args.length > 0 ? options.args[0] : null),
+    ...(executionTimeout !== undefined
+      ? { executionTimeout: protocol.duration(executionTimeout) }
+      : {}),
+    ...(runTimeout !== undefined ? { runTimeout: protocol.duration(runTimeout) } : {}),
+    ...(taskTimeout !== undefined ? { taskTimeout: protocol.duration(taskTimeout) } : {}),
+    cronSchedule: options.cronSchedule ?? '',
+    ...(retry
+      ? {
+          retryPolicy: {
+            // A negative count reads as unlimited, as 0 does.
+            maxAttempts: Math.max(0, Math.floor(retry.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)),
+            ...(retry.initialInterval !== undefined
+              ? { initialInterval: protocol.duration(Math.max(0, retry.initialInterval)) }
+              : {}),
+            ...(retry.maxInterval !== undefined
+              ? { maxInterval: protocol.duration(Math.max(0, retry.maxInterval)) }
+              : {}),
+            backoffCoefficient: retry.backoffCoefficient ?? 2.0,
+            nonRetryableErrors: [...(retry.nonRetryableErrorTypes ?? [])],
+          },
+        }
+      : {}),
+    idReusePolicy:
+      policy === undefined
+        ? IdReusePolicy.UNSPECIFIED
+        : ((IdReusePolicy as unknown as Record<string, IdReusePolicy>)[policy] ??
+          IdReusePolicy.UNSPECIFIED),
+  };
+}
+
+const LIST_ORDERS: Record<string, ListOrder> = {
+  START_TIME_ASC: ListOrder.START_TIME_ASC,
+  START_TIME_DESC: ListOrder.START_TIME_DESC,
+  CLOSE_TIME_ASC: ListOrder.CLOSE_TIME_ASC,
+  CLOSE_TIME_DESC: ListOrder.CLOSE_TIME_DESC,
+};
 
 /**
  * Client for starting and interacting with workflows on an Orcher server.
@@ -196,38 +268,27 @@ export class Client implements Disposable {
 
     this.ensureConnected();
 
+    // workflowId and taskQueue are optional, as in the Rust and Python SDKs:
+    // a caller should not have to invent an id just to start a workflow.
+    const workflowId = options.workflowId ?? randomUUID();
+    const taskQueue = options.taskQueue ?? 'default';
+
     try {
-      const nativeModule = getNativeModule();
-
-      // workflowId and taskQueue are optional, as in the Rust and Python SDKs:
-      // a caller should not have to invent an id just to start a workflow.
-      const workflowId = options.workflowId ?? randomUUID();
-      const taskQueue = options.taskQueue ?? 'default';
-
-      // The first argument is sent as a plain value that the native client
-      // serializes to JSON, not wrapped in a Payload envelope, as in the Rust SDK.
-      // Durations are normalized to milliseconds here, at the one boundary the
-      // native layer reads. Callers may pass the Duration helper or a bare
-      // number of milliseconds; below this line only milliseconds exist.
-      const nativeOptions = {
-        ...options,
-        workflowId,
-        taskQueue,
-        input: options.args && options.args.length > 0 ? options.args[0] : null,
-        workflowExecutionTimeout: optionalMillis(options.workflowExecutionTimeout),
-        workflowRunTimeout: optionalMillis(options.workflowRunTimeout),
-        workflowTaskTimeout: optionalMillis(options.workflowTaskTimeout),
-      };
-
-      // The direct bindings return a Promise; the FFI bindings return the
-      // handle synchronously.
-      const result = nativeModule.clientStartWorkflow(this.native!, nativeOptions);
-      const nativeHandle = await result;
-
+      const answer = protocol.expect(
+        await protocol.call(this.native!, {
+          oneofKind: 'startWorkflow',
+          startWorkflow: startMessage(options, workflowId, taskQueue),
+        }),
+        'started'
+      );
       // Record the run this start created, so the handle can say which run it
       // is and a caller can tell it apart from the run a later refused start names.
-      const runId = nativeModule.workflowHandleRunId?.(nativeHandle) || undefined;
-      return new WorkflowHandle<T>(nativeHandle, workflowId, runId);
+      const started = answer.started.workflow;
+      return new WorkflowHandle<T>(
+        this.native!,
+        started?.workflowId || workflowId,
+        started?.runId || undefined
+      );
     } catch (err) {
       throw wrapWorkflowError(
         err,
@@ -259,22 +320,7 @@ export class Client implements Disposable {
   getWorkflowHandle<T = unknown>(options: WorkflowHandleOptions): WorkflowHandle<T> {
     this.ensureConnected();
 
-    try {
-      const nativeModule = getNativeModule();
-      const nativeHandle = nativeModule.clientGetWorkflowHandle(
-        this.native!,
-        options.workflowId,
-        options.runId
-      );
-
-      return new WorkflowHandle<T>(nativeHandle, options.workflowId, options.runId);
-    } catch (err) {
-      throw wrapWorkflowError(
-        err,
-        `Failed to get workflow handle for ${options.workflowId}`,
-        options.workflowId
-      );
-    }
+    return new WorkflowHandle<T>(this.native!, options.workflowId, options.runId);
   }
 
   /**
@@ -312,8 +358,23 @@ export class Client implements Disposable {
     this.ensureConnected();
 
     try {
-      const nativeModule = getNativeModule();
-      return await nativeModule.clientListWorkflows(this.native!, options);
+      const answer = protocol.expect(
+        await protocol.call(this.native!, {
+          oneofKind: 'listWorkflows',
+          listWorkflows: {
+            pageSize: options.pageSize ?? 0,
+            pageToken: new Uint8Array(options.nextPageToken ?? []),
+            workflowType: options.workflowType ?? '',
+            taskQueue: options.taskQueue ?? '',
+            statuses: (options.statusFilter ?? []).map(protocol.protocolStatus),
+            order: options.sortOrder
+              ? (LIST_ORDERS[options.sortOrder] ?? ListOrder.UNSPECIFIED)
+              : ListOrder.UNSPECIFIED,
+          },
+        }),
+        'page'
+      );
+      return protocol.listPage(answer.page);
     } catch (err) {
       throw wrapError(err, 'Failed to list workflows');
     }
@@ -346,8 +407,18 @@ export class Client implements Disposable {
     this.ensureConnected();
 
     try {
-      const nativeModule = getNativeModule();
-      return await nativeModule.clientSearchWorkflows(this.native!, query, options);
+      const answer = protocol.expect(
+        await protocol.call(this.native!, {
+          oneofKind: 'searchWorkflows',
+          searchWorkflows: {
+            query,
+            pageSize: options.pageSize ?? 0,
+            pageToken: new Uint8Array(options.nextPageToken ?? []),
+          },
+        }),
+        'page'
+      );
+      return protocol.listPage(answer.page);
     } catch (err) {
       throw wrapError(err, `Failed to search workflows with query: ${query}`);
     }
@@ -412,31 +483,29 @@ export class Client implements Disposable {
     this.ensureConnected();
 
     try {
-      const nativeModule = getNativeModule();
-
       const payloadBytes =
         payload !== undefined
           ? new TextEncoder().encode(JSON.stringify(payload))
           : new Uint8Array(0);
 
-      if (nativeModule.clientInvokeActorOperation) {
-        const resultBytes = await nativeModule.clientInvokeActorOperation(
-          this.native!,
-          actorName,
-          key,
-          operation,
-          payloadBytes
-        );
-
-        if (resultBytes && resultBytes.length > 0) {
-          return JSON.parse(new TextDecoder().decode(resultBytes));
-        }
-        return undefined;
-      }
-
-      throw new ClientError(
-        'Actor operations not available - ensure native module supports actors'
+      const answer = protocol.expect(
+        await protocol.call(this.native!, {
+          oneofKind: 'invokeActor',
+          invokeActor: {
+            actorName,
+            key,
+            operation,
+            payload: payloadBytes,
+            idempotencyKey: '',
+          },
+        }),
+        'value'
       );
+      const resultBytes = answer.value;
+      if (resultBytes.length > 0) {
+        return JSON.parse(new TextDecoder().decode(resultBytes));
+      }
+      return undefined;
     } catch (err) {
       throw wrapError(
         err,
