@@ -154,7 +154,9 @@ export class Client implements Disposable {
       // The direct bindings return a Promise; the FFI bindings return the
       // handle synchronously.
       const result = nativeModule.clientConnect(this.config);
-      this.native = result instanceof Promise ? await result : result;
+      // A promise from the binding is made in Node's own realm, so it is
+      // recognised by its `then`, not as an instance of this realm's Promise.
+      this.native = await result;
 
       this.connected = true;
     } catch (err) {
@@ -220,7 +222,7 @@ export class Client implements Disposable {
       // The direct bindings return a Promise; the FFI bindings return the
       // handle synchronously.
       const result = nativeModule.clientStartWorkflow(this.native!, nativeOptions);
-      const nativeHandle = result instanceof Promise ? await result : result;
+      const nativeHandle = await result;
 
       // Record the run this start created, so the handle can say which run it
       // is and a caller can tell it apart from the run a later refused start names.

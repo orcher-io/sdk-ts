@@ -286,11 +286,21 @@ export function isErrorCode(error: unknown, code: ErrorCode): boolean {
   return isOrcherError(error) && error.code === code;
 }
 
+/** Whether `value` is an Error, or anything shaped like one. */
+function isErrorLike(value: unknown): value is { message: string } {
+  return (
+    value instanceof Error ||
+    (typeof value === 'object' &&
+      value !== null &&
+      typeof (value as { message?: unknown }).message === 'string')
+  );
+}
+
 /**
  * Wrap an unknown error as an OrcherError.
  *
- * An OrcherError is returned unchanged and an Error goes through
- * {@link OrcherError.fromNative}. For any other value, `message` is used when given,
+ * An OrcherError is returned unchanged and an Error, from this realm or
+ * another, goes through {@link OrcherError.fromNative}. For any other value, `message` is used when given,
  * otherwise the value's string form.
  */
 export function wrapError(error: unknown, message?: string): OrcherError {
@@ -298,8 +308,12 @@ export function wrapError(error: unknown, message?: string): OrcherError {
     return error;
   }
 
-  if (error instanceof Error) {
-    return OrcherError.fromNative(error);
+  // An error from the native binding is made in Node's own realm, so in a
+  // sandbox (a vm context, a test runner) it is not an instance of this
+  // realm's Error. What it says is its message, so any object with one is
+  // read as an error.
+  if (isErrorLike(error)) {
+    return OrcherError.fromNative(error as Error);
   }
 
   const errorMessage = message || String(error);
