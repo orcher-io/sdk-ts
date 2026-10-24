@@ -121,6 +121,15 @@ export interface ClientConfig {
 
   /** API key for authentication */
   apiKey?: string;
+
+  /**
+   * The longest any one call to the engine may take, in milliseconds
+   * (default: 180000). A call that runs out of it fails with a
+   * `TimeoutError`. Waiting for a workflow's result is made of calls the
+   * engine holds for up to 20 seconds each, so those may take that long
+   * whatever this says.
+   */
+  timeout?: number;
 }
 
 /**

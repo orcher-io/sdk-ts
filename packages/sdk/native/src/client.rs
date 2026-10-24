@@ -128,9 +128,13 @@ pub struct ClientHandleType {
 }
 
 impl ClientHandleType {
-    fn new(connection: &Connection) -> Self {
+    fn new(connection: &Connection, timeout: Option<Duration>) -> Self {
+        let client = connection.workflow_client();
         Self {
-            client: connection.workflow_client(),
+            client: match timeout {
+                Some(timeout) => client.with_timeout(timeout),
+                None => client,
+            },
             actors: connection.actor_client(),
         }
     }
@@ -193,6 +197,9 @@ pub struct ClientConfig {
     /// Sent as `authorization: Bearer <key>` on every request.
     pub api_key: Option<String>,
     pub tls_config: Option<TlsConfig>,
+    /// The longest any one call to the engine may take; sdk-core's default
+    /// when unset.
+    pub timeout: Option<Duration>,
 }
 
 impl ClientConfig {
@@ -205,6 +212,21 @@ impl ClientConfig {
         let identity = get_optional_string_property(cx, obj, "identity")?;
         let api_key = get_optional_string_property(cx, obj, "apiKey")?;
         let tls_config = parse_tls_config(cx, obj)?;
+        let timeout_value: Handle<JsValue> = obj.get(cx, "timeout")?;
+        let timeout = match timeout_value.downcast::<JsNumber, _>(cx) {
+            Ok(ms) => {
+                let ms = ms.value(cx);
+                if !ms.is_finite() || ms <= 0.0 {
+                    return cx.throw_error(crate::error_code::tagged_as(
+                        "INVALID_ARGUMENT",
+                        format!("{ms}"),
+                        "timeout must be a positive number of milliseconds",
+                    ));
+                }
+                Some(Duration::from_millis(ms as u64))
+            }
+            Err(_) => None,
+        };
 
         Ok(Self {
             server_url,
@@ -212,6 +234,7 @@ impl ClientConfig {
             identity,
             api_key,
             tls_config,
+            timeout,
         })
     }
 }
@@ -313,6 +336,7 @@ pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let server_url = config.server_url.clone();
     let namespace = config.namespace.clone();
     let api_key = config.api_key.clone();
+    let timeout = config.timeout;
 
     let tls_config = config.tls_config.clone();
 
@@ -342,7 +366,7 @@ pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
             has_tls
         );
 
-        Ok(ClientHandleType::new(&connection))
+        Ok(ClientHandleType::new(&connection, timeout))
     })
 }
 
