@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.14](https://github.com/orcher-io/sdk-ts/compare/v0.5.13...v0.5.14) (2026-10-24)
+
+
+### Features
+
+* bound each client call with ClientConfig.timeout ([#63](https://github.com/orcher-io/sdk-ts/issues/63)) ([869da80](https://github.com/orcher-io/sdk-ts/commit/869da80c77934d87aafdd3a5ab413ec7b34bee35))
+* make every client call through sdk-core's client protocol ([#65](https://github.com/orcher-io/sdk-ts/issues/65)) ([f8f30ad](https://github.com/orcher-io/sdk-ts/commit/f8f30ad95e8b39c1b46a5e8af70af3d200bbdf3e))
+
 ## [0.5.13](https://github.com/orcher-io/sdk-ts/compare/v0.5.12...v0.5.13) (2026-10-23)
 
 
