@@ -8,16 +8,28 @@ import { Client } from '../client';
 import { ClientError } from '../../core/errors';
 import { Duration } from '../../workflow/types';
 
-const mockCancel = jest.fn(async () => undefined);
+import { done, sentCall } from './support/client-call';
+
+const mockCall = jest.fn(async (_client: unknown, _call: Uint8Array) => done());
 
 jest.mock('../../core/native', () => ({
   getNativeModule: jest.fn(() => ({
     clientConnect: jest.fn(async () => ({})),
-    clientGetWorkflowHandle: jest.fn(() => ({})),
-    workflowHandleCancel: mockCancel,
+    clientCall: mockCall,
   })),
   isNativeAvailable: jest.fn(() => true),
 }));
+
+/** The cleanup limit the one cancel sent, in milliseconds; undefined for none. */
+function sentCleanupMs(): number | undefined {
+  const [, bytes] = mockCall.mock.calls[0]!;
+  const call = sentCall(bytes).call;
+  if (call.oneofKind !== 'cancel') {
+    throw new Error(`expected a cancel, got ${call.oneofKind}`);
+  }
+  const limit = call.cancel.cleanupTimeout;
+  return limit ? Number(limit.seconds) * 1000 + limit.nanos / 1_000_000 : undefined;
+}
 
 async function handle() {
   const client = new Client({ serverUrl: 'http://localhost:50051', namespace: 'default' });
@@ -26,31 +38,31 @@ async function handle() {
 }
 
 describe('WorkflowHandle.cancel', () => {
-  beforeEach(() => mockCancel.mockClear());
+  beforeEach(() => mockCall.mockClear());
 
   it('sets no cleanup limit by default', async () => {
     await (await handle()).cancel();
 
-    expect(mockCancel).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(sentCleanupMs()).toBeUndefined();
   });
 
   it('passes a Duration cleanup limit in milliseconds', async () => {
     await (await handle()).cancel({ cleanupTimeout: Duration.fromSeconds(90) });
 
-    expect(mockCancel).toHaveBeenCalledWith(expect.anything(), { cleanupTimeout: 90_000 });
+    expect(sentCleanupMs()).toBe(90_000);
   });
 
   it('passes a bare number as milliseconds', async () => {
     await (await handle()).cancel({ cleanupTimeout: 1500 });
 
-    expect(mockCancel).toHaveBeenCalledWith(expect.anything(), { cleanupTimeout: 1500 });
+    expect(sentCleanupMs()).toBe(1500);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects a cleanup limit of %p without calling the engine',
     async (cleanupTimeout) => {
       await expect((await handle()).cancel({ cleanupTimeout })).rejects.toThrow(ClientError);
-      expect(mockCancel).not.toHaveBeenCalled();
+      expect(mockCall).not.toHaveBeenCalled();
     }
   );
 });

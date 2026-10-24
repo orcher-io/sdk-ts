@@ -34,22 +34,6 @@ pub fn tagged(error: &CoreError, context: &str) -> String {
     format!("[{}{}] {}: {}", code_for(error), attributes, context, error)
 }
 
-/// Format an error from waiting for a workflow's result.
-///
-/// sdk-core reports every run that ended without a result (failed, canceled,
-/// terminated or timed out) as `WorkflowExecutionFailed`. The same variant
-/// means something else from an actor operation, so it is tagged here, where it
-/// can only be the workflow's own outcome, rather than in `code_for`. The
-/// TypeScript side reads the run's status to tell the four endings apart.
-pub fn tagged_result(error: &CoreError, context: &str) -> String {
-    match error {
-        CoreError::WorkflowExecutionFailed { .. } => {
-            tagged_as("WORKFLOW_EXECUTION_FAILED", error, context)
-        }
-        _ => tagged(error, context),
-    }
-}
-
 /// Tag a non-core error with an explicit code.
 ///
 /// Transport setup and JSON conversion fail with their own error types, which carry no

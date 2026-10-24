@@ -590,38 +590,15 @@ export interface NativeModule {
   clientConnect(config: ClientConfig): NativeClientHandle;
 
   /**
-   * Start a workflow
+   * Make one client protocol call: an encoded `orcher.client.v1.ClientCall`,
+   * answered with an encoded `ClientAnswer`. A refused call is answered with a
+   * `ClientError`, never rejected.
    */
-  clientStartWorkflow(
-    client: NativeClientHandle,
-    options: NativeWorkflowStartOptions
-  ): NativeWorkflowHandle;
+  clientCall(client: NativeClientHandle, call: Uint8Array): Promise<Uint8Array>;
 
-  /**
-   * Get workflow handle by ID
-   */
-  clientGetWorkflowHandle(
-    client: NativeClientHandle,
-    workflowId: string,
-    runId?: string
-  ): NativeWorkflowHandle;
 
-  /**
-   * List workflow executions
-   */
-  clientListWorkflows(
-    client: NativeClientHandle,
-    options: ListWorkflowsOptions
-  ): Promise<WorkflowListPage>;
 
-  /**
-   * Search workflow executions
-   */
-  clientSearchWorkflows(
-    client: NativeClientHandle,
-    query: string,
-    options: SearchWorkflowsOptions
-  ): Promise<WorkflowListPage>;
+
 
   /**
    * Close client connection
@@ -734,86 +711,17 @@ export interface NativeModule {
    */
   hostWireMetrics(host: NativeHostHandle): string;
 
-  /**
-   * Invoke an actor operation from the client side
-   */
-  clientInvokeActorOperation?(
-    client: NativeClientHandle,
-    actorName: string,
-    key: string,
-    operation: string,
-    payload: Uint8Array
-  ): Promise<Uint8Array>;
 
   // Workflow handle operations
-  /**
-   * Get workflow result (blocks until complete)
-   */
-  workflowHandleGetResult(handle: NativeWorkflowHandle): Promise<unknown>;
 
-  /**
-   * Cancel workflow. `cleanupTimeout` is in milliseconds.
-   */
-  workflowHandleCancel(
-    handle: NativeWorkflowHandle,
-    options?: { cleanupTimeout?: number }
-  ): Promise<void>;
 
-  /**
-   * Terminate workflow with reason
-   */
-  workflowHandleTerminate(handle: NativeWorkflowHandle, reason?: string): Promise<void>;
 
-  /**
-   * Reset workflow to a journal point, returning the new execution id
-   */
-  workflowHandleReset(
-    handle: NativeWorkflowHandle,
-    targetEventId: number,
-    reason?: string
-  ): Promise<string>;
 
-  /**
-   * Query workflow state
-   */
-  workflowHandleQuery(
-    handle: NativeWorkflowHandle,
-    queryName: string,
-    args?: unknown
-  ): Promise<unknown>;
 
-  /**
-   * Update workflow state
-   */
-  workflowHandleUpdate(
-    handle: NativeWorkflowHandle,
-    updateName: string,
-    args?: unknown
-  ): Promise<unknown>;
 
-  /**
-   * Send event to workflow
-   */
-  workflowHandleSendEvent(
-    handle: NativeWorkflowHandle,
-    eventName: string,
-    payload?: unknown
-  ): Promise<void>;
 
-  /**
-   * Get workflow status
-   */
-  workflowHandleGetStatus(handle: NativeWorkflowHandle): Promise<string>;
 
-  /**
-   * Describe workflow execution (detailed metadata)
-   */
-  workflowHandleDescribe(handle: NativeWorkflowHandle): Promise<WorkflowExecutionDescription>;
 
-  /**
-   * The run id a handle names; empty for one that names only a workflow.
-   */
-  workflowHandleRunId(handle: NativeWorkflowHandle): string;
 
   // The kernel protocol, for replaying recorded activations without an
   // engine (contract/replay-check.ts). The worker does not use these.
