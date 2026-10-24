@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.15](https://github.com/orcher-io/sdk-ts/compare/v0.5.14...v0.5.15) (2026-10-24)
+
+
+### Features
+
+* run workflows bound to the kernel's step-id scheme ([#66](https://github.com/orcher-io/sdk-ts/issues/66)) ([4a95fc5](https://github.com/orcher-io/sdk-ts/commit/4a95fc5d101b9b597c3fc88c13ec221634250ad2)), closes [#35](https://github.com/orcher-io/sdk-ts/issues/35)
+
 ## [0.5.14](https://github.com/orcher-io/sdk-ts/compare/v0.5.13...v0.5.14) (2026-10-24)
 
 
