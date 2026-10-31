@@ -5,7 +5,7 @@
 
 import { Worker } from '../worker';
 import { getNativeModule } from '../../core/native';
-import { TaskAssignment, TaskOutcome } from '../../core/generated/host';
+import { HeartbeatAnswer, TaskAssignment, TaskOutcome } from '../../core/generated/host';
 import type { Logger } from '../types';
 import type { TaskContext } from '../../task/context';
 
@@ -56,7 +56,7 @@ describe('task context ids', () => {
       hostCompleteTask: jest.fn(async (_host: unknown, outcome: Uint8Array) => {
         outcomes.push(TaskOutcome.fromBinary(outcome));
       }),
-      hostHeartbeat: jest.fn(() => ({ cancelRequested: false })),
+      hostHeartbeat: jest.fn(() => HeartbeatAnswer.toBinary({ cancelRequested: false })),
       hostTaskCancelled: jest.fn(() => new Promise(() => {})),
     });
 
