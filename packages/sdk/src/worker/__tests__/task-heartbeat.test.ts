@@ -4,8 +4,17 @@
  */
 
 import { TaskExecutor, type TaskHeartbeatBinding } from '../task-executor';
+import { Worker } from '../worker';
+import { getNativeModule } from '../../core/native';
+import { HeartbeatAnswer, TaskHeartbeat } from '../../core/generated/host';
 import type { ExecutionRequest, Logger, TaskDefinition } from '../types';
 import type { TaskContext } from '../../task/context';
+
+// A worker connects to nothing until run(), which none of these call.
+jest.mock('../../core/native', () => ({
+  getNativeModule: jest.fn(() => ({})),
+  isNativeAvailable: jest.fn(() => true),
+}));
 
 const logger: Logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 
@@ -55,5 +64,37 @@ describe('task heartbeats', () => {
     const result = await new TaskExecutor({ logger }).execute(task, request, binding);
 
     expect(result.result).toBe('stopped');
+  });
+
+  it('sends the worker host an encoded heartbeat and reads its encoded answer', async () => {
+    const worker = new Worker({
+      serverUrl: 'http://localhost:1',
+      namespace: 'default',
+      taskQueue: 'q',
+      workflows: [],
+      tasks: [named(async () => null, 'beating')],
+      logger,
+    });
+    const sent: TaskHeartbeat[] = [];
+    let cancelRequested = false;
+    (getNativeModule as jest.Mock).mockReturnValue({
+      hostHeartbeat: jest.fn((_host: unknown, heartbeat: Uint8Array) => {
+        sent.push(TaskHeartbeat.fromBinary(heartbeat));
+        return HeartbeatAnswer.toBinary({ cancelRequested });
+      }),
+    });
+    const token = new TextEncoder().encode('attempt-token');
+    const binding: TaskHeartbeatBinding = (worker as any).taskHeartbeatBinding({}, token);
+
+    expect(await binding.record({ processed: 3 })).toBe(false);
+    cancelRequested = true;
+    expect(await binding.record()).toBe(true);
+
+    expect(sent).toHaveLength(2);
+    expect(Buffer.from(sent[0]!.token).toString()).toBe('attempt-token');
+    expect(JSON.parse(Buffer.from(sent[0]!.details!.data).toString())).toEqual({ processed: 3 });
+    expect(sent[0]!.details!.metadata).toEqual({ encoding: new TextEncoder().encode('json') });
+    expect(Buffer.from(sent[1]!.token).toString()).toBe('attempt-token');
+    expect(sent[1]!.details).toBeUndefined();
   });
 });

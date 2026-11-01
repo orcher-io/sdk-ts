@@ -61,7 +61,9 @@ import { FailureCode, RunActivation, RunActivationResult } from '../core/generat
 import {
   ActorOperation as HostActorOperation,
   ActorResult,
+  HeartbeatAnswer,
   TaskAssignment,
+  TaskHeartbeat,
   TaskOutcome,
 } from '../core/generated/host';
 import { ActorOperation as ActorServiceOperation } from '../core/generated/actor_service';
@@ -922,11 +924,21 @@ export class Worker {
     const native = getNativeModule();
     return {
       record: async (details?: unknown) =>
-        native.hostHeartbeat(
-          host,
-          token,
-          details === undefined ? undefined : encoder.encode(JSON.stringify(details))
-        ).cancelRequested === true,
+        HeartbeatAnswer.fromBinary(
+          native.hostHeartbeat(
+            host,
+            TaskHeartbeat.toBinary({
+              token,
+              details:
+                details === undefined
+                  ? undefined
+                  : {
+                      data: encoder.encode(JSON.stringify(details)),
+                      metadata: { encoding: encoder.encode('json') },
+                    },
+            })
+          )
+        ).cancelRequested,
       cancelled: async () => (await native.hostTaskCancelled(host, token)) === true,
     };
   }

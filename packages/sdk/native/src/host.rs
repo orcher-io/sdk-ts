@@ -26,7 +26,6 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use serde::Deserialize;
 
-use orcher_sdk_core::proto::kernel::v1::Payload;
 use orcher_sdk_core::{
     ActorHandler, EncodedHost, Host, HostConfig, Registrations, StateScope, TlsConfig,
 };
@@ -303,30 +302,19 @@ pub fn host_next_task(mut cx: FunctionContext) -> JsResult<JsPromise> {
     Runtime::global().execute::<_, _, String>(&mut cx, async move { Ok(host.next_task().await) })
 }
 
-/// `hostHeartbeat(host, token: Uint8Array, details?: Uint8Array): { cancelRequested: boolean }`
+/// `hostHeartbeat(host, heartbeat: Uint8Array): Buffer`
 ///
-/// Records a heartbeat from a running task's code, with its details (their
-/// JSON encoding), sent with the next heartbeat due; says whether the task has
+/// Records a heartbeat from a running task's code, an encoded
+/// `TaskHeartbeat` whose details are sent with the next heartbeat due, and
+/// answers with an encoded `HeartbeatAnswer`, which says whether the task has
 /// been asked to cancel.
-pub fn host_heartbeat(mut cx: FunctionContext) -> JsResult<JsObject> {
-    let host = host_arg(&mut cx, 0)?;
-    let token = bytes_arg(&mut cx, 1)?;
-    let details = match cx.argument_opt(2) {
-        Some(value) if value.is_a::<JsTypedArray<u8>, _>(&mut cx) => {
-            let array = value.downcast_or_throw::<JsTypedArray<u8>, _>(&mut cx)?;
-            Some(Payload {
-                data: array.as_slice(&cx).to_vec(),
-                metadata: [("encoding".to_string(), b"json".to_vec())].into(),
-                ..Default::default()
-            })
-        }
-        _ => None,
-    };
-    let answer = host.heartbeat(&token, details);
-    let object = cx.empty_object();
-    let cancel_requested = cx.boolean(answer.cancel_requested);
-    object.set(&mut cx, "cancelRequested", cancel_requested)?;
-    Ok(object)
+pub fn host_heartbeat(mut cx: FunctionContext) -> JsResult<JsBuffer> {
+    let host = encoded_arg(&mut cx, 0)?;
+    let bytes = bytes_arg(&mut cx, 1)?;
+    match host.heartbeat(&bytes) {
+        Ok(answer) => JsBuffer::from_slice(&mut cx, &answer),
+        Err(e) => cx.throw_error(refused(e, "the heartbeat was not taken")),
+    }
 }
 
 /// `hostTaskCancelled(host, token: Uint8Array): Promise<boolean>`
@@ -334,7 +322,7 @@ pub fn host_heartbeat(mut cx: FunctionContext) -> JsResult<JsObject> {
 /// Resolves `true` once a running task is asked to cancel, and `false` once
 /// its outcome is reported (at once for a task the host does not hold).
 pub fn host_task_cancelled(mut cx: FunctionContext) -> JsResult<JsPromise> {
-    let host = host_arg(&mut cx, 0)?;
+    let host = encoded_arg(&mut cx, 0)?;
     let token = bytes_arg(&mut cx, 1)?;
     Runtime::global().execute::<_, _, String>(&mut cx, async move {
         Ok(host.task_cancelled(&token).await)

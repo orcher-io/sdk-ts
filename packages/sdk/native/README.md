@@ -15,7 +15,9 @@ JavaScript as a handle (`hostStart`) and pulls: `hostNextActivation`,
 `hostNextTask` and `hostNextActorOperation` hand over one piece of work as its
 protobuf encoding (`orcher.kernel.v1.RunActivation`,
 `orcher.host.v1.TaskAssignment`, `orcher.host.v1.ActorOperation`), and the
-matching `hostComplete*` take the outcome back the same way. A pull resolves
+matching `hostComplete*` take the outcome back the same way, as `hostHeartbeat`
+takes a running task's `orcher.host.v1.TaskHeartbeat` and answers with its
+`orcher.host.v1.HeartbeatAnswer`. A pull resolves
 `null` once the host has stopped. The TypeScript side decodes the messages with
 protobuf-ts, runs the workflow, task and actor handlers, and pulls only when it
 has room to run what a pull brings. The client calls are plain functions

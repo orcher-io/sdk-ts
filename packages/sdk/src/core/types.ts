@@ -631,15 +631,12 @@ export interface NativeModule {
   hostNextTask(host: NativeHostHandle): Promise<Uint8Array | null>;
 
   /**
-   * Record a heartbeat from a running task's code, with the JSON encoding of
-   * its details, sent with the next heartbeat due; says whether the task has
-   * been asked to cancel.
+   * Record a heartbeat from a running task's code, an encoded `TaskHeartbeat`
+   * whose details are sent with the next heartbeat due; answers with an
+   * encoded `HeartbeatAnswer`, which says whether the task has been asked to
+   * cancel.
    */
-  hostHeartbeat(
-    host: NativeHostHandle,
-    token: Uint8Array,
-    details?: Uint8Array
-  ): { cancelRequested: boolean };
+  hostHeartbeat(host: NativeHostHandle, heartbeat: Uint8Array): Uint8Array;
 
   /**
    * Resolves `true` once a running task is asked to cancel, and `false` once
