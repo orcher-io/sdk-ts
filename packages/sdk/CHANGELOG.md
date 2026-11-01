@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.16](https://github.com/orcher-io/sdk-ts/compare/v0.5.15...v0.5.16) (2026-11-01)
+
+
+### Features
+
+* build on orcher-sdk-core 0.22.1 ([#68](https://github.com/orcher-io/sdk-ts/issues/68)) ([4bfea09](https://github.com/orcher-io/sdk-ts/commit/4bfea092092327be0c1c16884fd232d0e73417e7))
+
+
+### Changes
+
+* send task heartbeats to the worker host encoded ([#71](https://github.com/orcher-io/sdk-ts/issues/71)) ([bb76d12](https://github.com/orcher-io/sdk-ts/commit/bb76d12b65060ccf7e36172e8168dac7c7e7bec6)), closes [#70](https://github.com/orcher-io/sdk-ts/issues/70)
+
 ## [0.5.15](https://github.com/orcher-io/sdk-ts/compare/v0.5.14...v0.5.15) (2026-10-24)
 
 
