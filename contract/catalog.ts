@@ -574,6 +574,12 @@ export class ContractProbe {
     }
   }
 
+  /** Returns its one argument as it received it (sdk-core#149). */
+  @Operation({ name: 'echo_argument', mode: 'shared' })
+  async echoArgument(_ctx: ActorContext, argument: unknown): Promise<unknown> {
+    return { received: argument };
+  }
+
   /** Control: exclusive writes must succeed and round-trip. */
   @Operation({ name: 'exclusive_write_roundtrip', mode: 'exclusive' })
   async exclusiveWriteRoundtrip(ctx: ActorContext, input: { value: string }): Promise<unknown> {
