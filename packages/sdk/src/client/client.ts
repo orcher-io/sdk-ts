@@ -55,6 +55,14 @@ function rejectUnsupportedStartOptions(options: WorkflowStartOptions): void {
       );
     }
   }
+  // A call carries one argument value. Sending only the first of several would
+  // drop the rest without a word.
+  if (options.args !== undefined && options.args.length > 1) {
+    throw new ClientError(
+      `A workflow takes one input, but args has ${options.args.length} values. ` +
+        `Pass them as one object: args: [{ ... }].`
+    );
+  }
   // The native layer would refuse an unknown policy too. Rejecting it here
   // gives an error that names the option and the values it accepts.
   const policy = options.workflowIdReusePolicy;

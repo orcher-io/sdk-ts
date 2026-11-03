@@ -75,6 +75,19 @@ describe('createActorProxy', () => {
       );
     });
 
+    it('refuses several arguments rather than sending only the first', async () => {
+      // A call carries one argument value (sdk-core#149).
+      class TestActor {
+        async addItem(_ctx: any, _item: any) {}
+      }
+
+      const proxy = createActorProxy(TestActor, 'TestActor', 'key-1', mockInvoker);
+      await expect((proxy as any).addItem({ name: 'book' }, 2)).rejects.toThrow(
+        'TestActor.addItem takes one input, but was called with 2 arguments. Pass them as one object.'
+      );
+      expect(mockInvoker.invokeActor).not.toHaveBeenCalled();
+    });
+
     it('should pass undefined when no arguments', async () => {
       class TestActor {
         async getTotal() {}
@@ -262,12 +275,9 @@ describe('createActorProxy', () => {
       const result = await (proxy as any).addItem({ name: 'book' });
 
       expect(result).toEqual({ items: [], total: 0 });
-      expect(mockInvoker.invokeActor).toHaveBeenCalledWith(
-        'FullActor',
-        'user-1',
-        'addItem',
-        { name: 'book' }
-      );
+      expect(mockInvoker.invokeActor).toHaveBeenCalledWith('FullActor', 'user-1', 'addItem', {
+        name: 'book',
+      });
     });
   });
 });

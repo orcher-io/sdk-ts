@@ -147,6 +147,13 @@ describe('start options that cannot be honoured are rejected', () => {
     );
   });
 
+  it('rejects several args rather than sending only the first', async () => {
+    // A call carries one argument value (sdk-core#149).
+    await expect(client.startWorkflow({ ...base, args: [1, 2] })).rejects.toThrow(
+      'A workflow takes one input, but args has 2 values. Pass them as one object: args: [{ ... }].'
+    );
+  });
+
   it('rejects a reuse policy it does not know rather than starting under another', async () => {
     // The key rather than the value — an easy slip, and one the native layer
     // would otherwise be left to refuse with less to go on.
