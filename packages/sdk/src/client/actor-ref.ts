@@ -7,6 +7,7 @@
  * @packageDocumentation
  */
 
+import { ClientError } from '../core/errors';
 import type { Type } from '../di/types';
 
 /**
@@ -48,30 +49,24 @@ export type ActorRef<T> = {
  * `(ctx, input: infer I) => ...`: a `(ctx) => ...` method is assignable to that
  * shape too, with `I` inferred as `unknown`, which would demand an argument the
  * operation does not take. `[]` gives `() => Promise<O>`, `[I]` and `[I?]` keep
- * the input as declared, and anything longer is not callable through the proxy,
- * which sends one payload.
+ * the input as declared, and anything longer is not callable through the proxy:
+ * a call carries one argument value.
  */
-type ActorOperation<A extends any[], O> = A extends [unknown?]
-  ? (...args: A) => Promise<O>
-  : never;
+type ActorOperation<A extends any[], O> = A extends [unknown?] ? (...args: A) => Promise<O> : never;
 
 /**
  * Sends an actor operation to the server. `Client` implements it.
  */
 export interface ActorInvoker {
-  invokeActor(
-    actorName: string,
-    key: string,
-    operation: string,
-    payload?: any
-  ): Promise<any>;
+  invokeActor(actorName: string, key: string, operation: string, payload?: any): Promise<any>;
 }
 
 /**
  * Create a typed actor proxy.
  *
  * Each method call on the proxy becomes an `invoker.invokeActor()` call with
- * the first argument as the payload.
+ * its one argument as the payload. A call carries one argument value, so a
+ * call with more than one is refused rather than sending only the first.
  *
  * @param actorClass - The actor class, used to resolve static `OperationReference` properties
  * @param actorName - The actor type name
@@ -103,6 +98,12 @@ export function createActorProxy<T>(
         // operation name, which may differ from the method name.
         const ref = (actorClass as any)[prop];
         const operationName = ref?.operationName ?? prop;
+        if (args.length > 1) {
+          throw new ClientError(
+            `${actorName}.${operationName} takes one input, but was called with ` +
+              `${args.length} arguments. Pass them as one object.`
+          );
+        }
         const payload = args.length > 0 ? args[0] : undefined;
         return invoker.invokeActor(actorName, key, operationName, payload);
       };
