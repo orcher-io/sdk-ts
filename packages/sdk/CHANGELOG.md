@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.18](https://github.com/orcher-io/sdk-ts/compare/v0.5.17...v0.5.18) (2026-11-03)
+
+
+### Bug Fixes
+
+* refuse several arguments rather than sending only the first ([#75](https://github.com/orcher-io/sdk-ts/issues/75)) ([c7bda9f](https://github.com/orcher-io/sdk-ts/commit/c7bda9fcb2bb41e269a4bf09f559f2de41d0c63c))
+
 ## [0.5.17](https://github.com/orcher-io/sdk-ts/compare/v0.5.16...v0.5.17) (2026-11-01)
 
 
