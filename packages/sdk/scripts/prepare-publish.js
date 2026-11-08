@@ -24,7 +24,8 @@
  * - writes the platform packages into the SDK's package.json as
  *   optionalDependencies;
  * - writes the repository README into the SDK package, with its relative
- *   links made absolute so they work on npmjs.com.
+ *   links made absolute and its banner one <picture>, so it works on
+ *   npmjs.com.
  *
  * Needs `npm run build:ts` first: the targets come from the built loader.
  *
@@ -133,8 +134,7 @@ function main() {
     // neither the repository root nor this package, so point them at GitHub.
     const blob = 'https://github.com/orcher-io/sdk-ts/blob/main/';
     const raw = 'https://raw.githubusercontent.com/orcher-io/sdk-ts/main/';
-    const readme = fs
-      .readFileSync(path.join(repoRoot, 'README.md'), 'utf8')
+    const readme = registryReadme(fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8'))
       .replace(/(src|srcset)="\.\/(?!\/)/g, `$1="${raw}`)
       .replace(/\]\(\.?\/?(?!https?:|#)([^)]+)\)/g, `](${blob}$1)`)
       .replace(/href="\.\/(?!\/)/g, `href="${blob}`);
@@ -144,7 +144,36 @@ function main() {
   console.log(check ? 'all bindings present' : `ready to publish ${sdk.name}@${sdk.version}`);
 }
 
-module.exports = { platformDependencies, publishManifest, writePublishManifest };
+/**
+ * The README as npm shows it. On GitHub the banner is two images that GitHub
+ * shows by its own theme (#gh-dark-mode-only, #gh-light-mode-only); npm
+ * ignores those markers and would show both, so here the banner between
+ * `<!-- banner -->` and `<!-- /banner -->` becomes one <picture> that follows
+ * the reader's colour scheme.
+ */
+function registryReadme(markdown) {
+  const block = /^<!-- banner -->\n([\s\S]*?)^<!-- \/banner -->\n/m.exec(markdown);
+  if (!block) throw new Error('README.md has no <!-- banner --> block');
+  const src = (mode) => {
+    const found = new RegExp(`src="([^"]+)#gh-${mode}-mode-only"`).exec(block[1]);
+    if (!found) throw new Error(`README.md's banner has no #gh-${mode}-mode-only image`);
+    return found[1];
+  };
+  const alt = (/alt="([^"]*)"/.exec(block[1]) || [, ''])[1];
+  const picture = [
+    '<p>',
+    '  <picture>',
+    `    <source media="(prefers-color-scheme: dark)" srcset="${src('dark')}">`,
+    `    <source media="(prefers-color-scheme: light)" srcset="${src('light')}">`,
+    `    <img alt="${alt}" src="${src('dark')}" width="100%">`,
+    '  </picture>',
+    '</p>',
+    '',
+  ].join('\n');
+  return markdown.replace(block[0], picture);
+}
+
+module.exports = { platformDependencies, publishManifest, registryReadme, writePublishManifest };
 
 if (require.main === module) {
   main();
