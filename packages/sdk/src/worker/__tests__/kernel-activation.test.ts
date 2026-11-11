@@ -145,7 +145,7 @@ describe('a kernel activation', () => {
     [0, 1],
   ])('reads attempt %i as %i', (attempt, reads) => {
     // A first run is attempt 1 and the run of its first retry attempt 2, as
-    // the engine numbers them. An engine before orcher#356 numbers the first
+    // the engine numbers them. An engine before 0.6.0 numbers the first
     // run 0, which reads as 1.
     const activation = activationOf('wf', []);
     const start = activation.resolutions[0]!.what;
