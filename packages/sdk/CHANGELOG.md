@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.19](https://github.com/orcher-io/sdk-ts/compare/v0.5.18...v0.5.19) (2026-11-13)
+
+
+### Bug Fixes
+
+* report isReplaying only while the code re-runs what it already ran ([#81](https://github.com/orcher-io/sdk-ts/issues/81)) ([cc2d58b](https://github.com/orcher-io/sdk-ts/commit/cc2d58b817a5eb4bc00d3475df8e3acdad645b8c)), closes [#80](https://github.com/orcher-io/sdk-ts/issues/80)
+
+
+### Documentation
+
+* the banner follows the GitHub theme, not the computer's ([#77](https://github.com/orcher-io/sdk-ts/issues/77)) ([8c91aaa](https://github.com/orcher-io/sdk-ts/commit/8c91aaa0102d02cefa9ae6831f68eff11a379bdf))
+
 ## [0.5.18](https://github.com/orcher-io/sdk-ts/compare/v0.5.17...v0.5.18) (2026-11-03)
 
 
