@@ -226,6 +226,16 @@ export function loadActivation(activation: RunActivation, namespace: string): Lo
     const what = resolution.what;
     const stepId = resolution.stepId;
     const order = orderOf(position, resolution);
+    // An outcome the code waits on; an event with no name is dropped below,
+    // so the code could never receive it.
+    if (
+      what.oneofKind === 'step' ||
+      what.oneofKind === 'child' ||
+      (what.oneofKind === 'timer' && stepId) ||
+      (what.oneofKind === 'event' && what.event.name)
+    ) {
+      context.noteOutcome(order, resolution.replaying);
+    }
     switch (what.oneofKind) {
       case 'step': {
         noteResolvedAt(stepId, resolution.at, order);
