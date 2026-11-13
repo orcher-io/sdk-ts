@@ -819,8 +819,10 @@ export class WorkflowContext {
     const sequence = this.nextSequence();
     const stepId = this.stepIdFor('value', sequence, `${stepName}_${sequence}`);
 
-    // A journaled result means the closure already ran.
+    // A journaled result means the closure already ran. It is read back, not
+    // waited for: the clock stays where the first run had it.
     if (this.state.pendingTaskResults.has(stepId)) {
+      this.received(stepId);
       const cached = this.state.pendingTaskResults.get(stepId);
       throwIfTaskFailed(stepName, cached, 'Step failed');
       return cached as T;
@@ -1425,20 +1427,91 @@ export class WorkflowContext {
   }
 
   /**
-   * Check if the workflow is replaying
+   * Whether the code is re-running what an earlier activation of the run
+   * already ran.
    *
-   * @returns True if replaying from history
+   * A run's code runs again from the start each time it is activated,
+   * receiving the outcomes it waited for from its history. Until it has
+   * received the newest outcome this activation holds, everything it does was
+   * done before; from then on it is new. So it is false throughout a run's
+   * first activation, and in a later one it turns false at the point the code
+   * reaches work the history has no outcome for.
+   *
+   * Use it to avoid repeating logs or metrics on replay. Do not use it to
+   * decide whether to perform an effect: run effects as tasks, which the
+   * engine records, so they happen once whatever the code's replays.
+   *
+   * It is exact when the engine marks which of an activation's outcomes the
+   * run has already observed. Without those marks the newest outcome is taken
+   * as the new one, which is off in two cases: an activation with several new
+   * outcomes (two tasks that finished together) reads true until the code has
+   * received the newest, and one with no new outcome at all (for a query)
+   * reads false past the newest outcome.
    *
    * @example
    * ```typescript
    * if (!ctx.isReplaying()) {
-   *   console.log('Fresh execution');
+   *   console.log('Reached for the first time');
    * }
    * ```
    */
   isReplaying(): boolean {
+    if (this.anyOutcomeSeenBefore) {
+      // The activation says which outcomes the run saw before: the code
+      // replays until it receives the first that is new, and throughout if
+      // there is none.
+      return this.firstNewOutcome === undefined || this.receivedThrough < this.firstNewOutcome;
+    }
+    if (this.newestOutcome > 0) {
+      // Unmarked: take the newest outcome as what is new.
+      return this.receivedThrough < this.newestOutcome;
+    }
+    // No outcome noted: a context built by hand rather than from an
+    // activation, which says itself whether it replays.
     return this.state.replaying;
   }
+
+  /**
+   * Note that this activation holds an outcome for the code to receive, at
+   * `order` in the run's order of outcomes, and whether the run already
+   * observed it in an earlier activation as the activation marks it.
+   *
+   * @internal
+   */
+  noteOutcome(order: number, seenBefore: boolean): void {
+    this.newestOutcome = Math.max(this.newestOutcome, order);
+    if (seenBefore) {
+      this.anyOutcomeSeenBefore = true;
+    } else if (this.firstNewOutcome === undefined || order < this.firstNewOutcome) {
+      this.firstNewOutcome = order;
+    }
+  }
+
+  /** The code received the outcome at `order` in the run's order of outcomes. */
+  private receivedAtOrder(order: number | undefined): void {
+    if (order !== undefined && order > this.receivedThrough) {
+      this.receivedThrough = order;
+    }
+  }
+
+  /** The code received the outcome held under `key`, without its clock
+   * moving. */
+  private received(key: string): void {
+    this.receivedAtOrder(this.resolvedOrder.get(key));
+  }
+
+  /** The latest place in the run's order of outcomes of any outcome this
+   * activation holds for the code to receive; 0 if it holds none. */
+  private newestOutcome = 0;
+
+  /** The earliest place of an outcome the activation marks as new to the run. */
+  private firstNewOutcome: number | undefined;
+
+  /** Whether the activation marks any outcome as observed before. */
+  private anyOutcomeSeenBefore = false;
+
+  /** The latest place of an outcome the code has received so far. */
+  private receivedThrough = 0;
 
   /**
    * Get the current attempt number
@@ -1756,7 +1829,7 @@ export class WorkflowContext {
    * workflow's clock moves to when the event was journaled. */
   private takeBufferedEvent(eventName: string): any {
     this.bufferedEventPositions.get(eventName)?.shift();
-    this.bufferedEventOrders.get(eventName)?.shift();
+    this.receivedAtOrder(this.bufferedEventOrders.get(eventName)?.shift());
     const atMs = this.bufferedEventTimes.get(eventName)?.shift();
     if (atMs !== undefined) {
       this._time.advanceTo(atMs);
@@ -2149,6 +2222,7 @@ export class WorkflowContext {
    * journaled, and a replay must read the same.
    */
   private observe(key: string): void {
+    this.received(key);
     const atMs = this.resolvedAt.get(key);
     if (atMs !== undefined) {
       this._time.advanceTo(atMs);
