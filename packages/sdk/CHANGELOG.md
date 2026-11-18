@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.20](https://github.com/orcher-io/sdk-ts/compare/v0.5.19...v0.5.20) (2026-11-18)
+
+
+### Features
+
+* build on orcher-sdk-core 0.23.2 ([#83](https://github.com/orcher-io/sdk-ts/issues/83)) ([e6fd4c9](https://github.com/orcher-io/sdk-ts/commit/e6fd4c9e41cb6eae187efc317e1585d1cac184b1))
+
 ## [0.5.19](https://github.com/orcher-io/sdk-ts/compare/v0.5.18...v0.5.19) (2026-11-13)
 
 
