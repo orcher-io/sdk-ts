@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.21](https://github.com/orcher-io/sdk-ts/compare/v0.5.20...v0.5.21) (2026-11-22)
+
+
+### Features
+
+* encrypt and compress payloads end to end ([#87](https://github.com/orcher-io/sdk-ts/issues/87)) ([c315d05](https://github.com/orcher-io/sdk-ts/commit/c315d057588715c113e137b9e1f367cc6ff5456c))
+
 ## [0.5.20](https://github.com/orcher-io/sdk-ts/compare/v0.5.19...v0.5.20) (2026-11-18)
 
 
