@@ -269,6 +269,28 @@ export class WorkerBuilder {
   }
 
   /**
+   * Encrypt every payload with AES-256-GCM. See `WorkerOptions.encryption`.
+   *
+   * @param encryption - The 32-byte key, its id, and keys kept for reading
+   * @returns Builder instance for chaining
+   */
+  encryption(encryption: WorkerOptions['encryption']): this {
+    this.options.encryption = encryption;
+    return this;
+  }
+
+  /**
+   * Compress every payload. See `WorkerOptions.compression`.
+   *
+   * @param compression - `'gzip'`
+   * @returns Builder instance for chaining
+   */
+  compression(compression: WorkerOptions['compression']): this {
+    this.options.compression = compression;
+    return this;
+  }
+
+  /**
    * Enable auto-discovery of decorated classes
    *
    * During `build()`, imports every file that matches the patterns so their decorators

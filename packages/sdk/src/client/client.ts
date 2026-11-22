@@ -8,6 +8,7 @@
 import { randomUUID } from 'crypto';
 import { ClientError, wrapError } from '../core/errors';
 import { tlsForUrl } from '../core/tls';
+import { PayloadEncryption, checkedCompression } from '../core/payload-options';
 import { wrapWorkflowError } from '../errors/from-native';
 import { durationToMillis, type DurationInput } from '../workflow/types';
 import { getNativeModule } from '../core/native';
@@ -183,7 +184,14 @@ export class Client implements Disposable {
   private disposed = false;
   private connected = false;
 
-  private readonly config: ClientConfig;
+  /** The configuration, without the encryption keys. */
+  private readonly config: Omit<ClientConfig, 'encryption'>;
+
+  /**
+   * The encryption keys, checked, in a form that is not printed with the
+   * client.
+   */
+  private readonly encryption?: PayloadEncryption;
 
   /**
    * Create a client. The connection is not opened until {@link Client.connect}.
@@ -191,7 +199,8 @@ export class Client implements Disposable {
    * TLS follows the URL scheme (`https` enables it) unless `config.tls` is set.
    *
    * @param config - Client configuration
-   * @throws {ClientError} If `serverUrl` or `namespace` is missing, or `serverUrl` is not a URL
+   * @throws {ClientError} If `serverUrl` or `namespace` is missing, `serverUrl` is not a URL,
+   *   `encryption.key` is not exactly 32 bytes, or `compression` is not `'gzip'`
    *
    * @example
    * ```typescript
@@ -204,8 +213,13 @@ export class Client implements Disposable {
    */
   constructor(config: ClientConfig) {
     // TLS follows the URL scheme unless set explicitly; see tlsForUrl.
-    this.config = { ...config, tls: tlsForUrl(config.serverUrl, config.tls) };
+    // The keys are kept apart from the rest, in a form that is not printed.
+    const { encryption, ...rest } = config;
+    this.config = { ...rest, tls: tlsForUrl(config.serverUrl, config.tls) };
     this.validateConfig();
+    const invalid = (message: string) => new ClientError(message);
+    this.config.compression = checkedCompression(config.compression, invalid);
+    this.encryption = PayloadEncryption.from(encryption, invalid);
   }
 
   /**
@@ -233,7 +247,10 @@ export class Client implements Disposable {
 
       // The direct bindings return a Promise; the FFI bindings return the
       // handle synchronously.
-      const result = nativeModule.clientConnect(this.config);
+      const result = nativeModule.clientConnect({
+        ...this.config,
+        encryption: this.encryption?.toClientConfig(),
+      });
       // A promise from the binding is made in Node's own realm, so it is
       // recognised by its `then`, not as an instance of this realm's Promise.
       this.native = await result;

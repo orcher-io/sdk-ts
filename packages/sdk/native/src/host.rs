@@ -32,6 +32,7 @@ use orcher_sdk_core::{
 
 use crate::error_code::{tagged, tagged_as};
 use crate::runtime::{IntoJs, Runtime};
+use crate::seal::{EncryptionJson, SealSettings};
 
 /// The running worker host JavaScript holds, boxed.
 pub struct HostHandle {
@@ -72,6 +73,11 @@ struct ConfigJson {
     shutdown_grace_ms: Option<u64>,
     sdk_name: Option<String>,
     sdk_version: Option<String>,
+    /// `gzip`, to compress every payload.
+    compression: Option<String>,
+    /// The keys every payload is encrypted and decrypted with, as base64.
+    /// Its debug output holds no key.
+    encryption: Option<EncryptionJson>,
 }
 
 /// TLS settings: the files to read, or none of them for TLS verified against
@@ -202,6 +208,18 @@ impl ConfigJson {
         }
         if let Some(ms) = self.shutdown_grace_ms {
             config = config.with_shutdown_grace(Duration::from_millis(ms));
+        }
+        // The seal belongs to the connection, which every driver of the host
+        // (workflows, tasks, actors and their state) is built from.
+        let seal = SealSettings {
+            compression: self.compression,
+            encryption: self
+                .encryption
+                .map(EncryptionJson::into_settings)
+                .transpose()?,
+        };
+        if let Some(seal) = seal.into_seal()? {
+            config.connection = config.connection.with_payload_seal(seal);
         }
         Ok(config)
     }
@@ -606,6 +624,99 @@ mod tests {
         .unwrap();
         let error = config.into_host_config().unwrap_err();
         assert!(error.starts_with("[INVALID_ARGUMENT]"), "{error}");
+    }
+
+    /// 32 bytes of `byte`, as the base64 the configuration carries.
+    fn key(byte: u8) -> String {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        STANDARD.encode([byte; 32])
+    }
+
+    #[test]
+    fn without_payload_options_the_connection_has_no_seal() {
+        let config: ConfigJson = serde_json::from_str(
+            r#"{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n" }"#,
+        )
+        .unwrap();
+        let config = config.into_host_config().unwrap();
+        assert!(config.connection.payload_seal.is_none());
+    }
+
+    #[test]
+    fn encryption_and_compression_seal_the_connection() {
+        let config: ConfigJson = serde_json::from_str(&format!(
+            r#"{{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n",
+                  "compression": "gzip",
+                  "encryption": {{ "key": "{}", "keyId": "k2",
+                                   "decryptionKeys": {{ "k1": "{}" }} }} }}"#,
+            key(2),
+            key(1),
+        ))
+        .unwrap();
+        let seal = config
+            .into_host_config()
+            .unwrap()
+            .connection
+            .payload_seal
+            .expect("a seal");
+        let stored = seal.seal(br#"{"card":"4242"}"#).unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(envelope["metadata"]["encryption-key-id"], "k2");
+        assert!(!String::from_utf8_lossy(&stored).contains("4242"));
+        assert_eq!(
+            seal.open(&stored).unwrap(),
+            Some(br#"{"card":"4242"}"#.to_vec())
+        );
+    }
+
+    #[test]
+    fn compression_alone_seals_the_connection() {
+        let config: ConfigJson = serde_json::from_str(
+            r#"{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n",
+                 "compression": "gzip" }"#,
+        )
+        .unwrap();
+        let config = config.into_host_config().unwrap();
+        assert!(config.connection.payload_seal.is_some());
+    }
+
+    #[test]
+    fn an_encryption_key_of_the_wrong_length_is_refused() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let config: ConfigJson = serde_json::from_str(&format!(
+            r#"{{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n",
+                  "encryption": {{ "key": "{}" }} }}"#,
+            STANDARD.encode([9u8; 16]),
+        ))
+        .unwrap();
+        let error = config.into_host_config().unwrap_err();
+        assert!(error.starts_with("[INVALID_ARGUMENT]"), "{error}");
+        assert!(error.contains("exactly 32 bytes"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_compression_is_refused() {
+        let config: ConfigJson = serde_json::from_str(
+            r#"{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n",
+                 "compression": "brotli" }"#,
+        )
+        .unwrap();
+        let error = config.into_host_config().unwrap_err();
+        assert!(error.starts_with("[INVALID_ARGUMENT]"), "{error}");
+    }
+
+    #[test]
+    fn the_configuration_does_not_print_its_keys() {
+        let secret = key(0x5A);
+        let config: ConfigJson = serde_json::from_str(&format!(
+            r#"{{ "serverUrl": "http://x:1", "taskQueue": "q", "namespace": "n",
+                  "encryption": {{ "key": "{secret}", "decryptionKeys": {{ "old": "{secret}" }} }} }}"#,
+        ))
+        .unwrap();
+        assert!(!format!("{config:?}").contains(&secret));
+        let config = config.into_host_config().unwrap();
+        let printed = format!("{:?}", config.connection);
+        assert!(!printed.contains(&secret) && !printed.contains("90, 90"));
     }
 
     #[test]

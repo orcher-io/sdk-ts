@@ -304,6 +304,91 @@ pass a reference.
 </details>
 
 <details>
+<summary><b>Encryption</b>: payloads the engine cannot read</summary>
+
+<br />
+
+Give a client and a worker the same 32-byte key and every payload is encrypted
+with AES-256-GCM before it leaves the process and decrypted after it arrives.
+The engine never holds the key: it stores ciphertext and returns it unchanged,
+so the values cannot be read in its database or its dashboard. Your workflow
+and task code is unchanged and sees plain values.
+
+```typescript
+import { Client, Worker } from '@orcher/sdk';
+
+// 32 random bytes, from your secret store. Make one with:
+//   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+const key = Buffer.from(process.env.ORCHER_PAYLOAD_KEY!, 'base64');
+
+const worker = new Worker({
+  serverUrl: 'http://localhost:50051',
+  namespace: 'default',
+  taskQueue: 'orders',
+  encryption: { key, keyId: '2026-11' },
+});
+
+const client = new Client({
+  serverUrl: 'http://localhost:50051',
+  namespace: 'default',
+  encryption: { key, keyId: '2026-11' },
+});
+```
+
+Both `ClientConfig` and `WorkerOptions` take the same two options:
+
+| Option                      | Type                         | What it does                                                                                                              |
+| --------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `encryption.key`            | `Uint8Array`                 | The key to encrypt with. Exactly 32 bytes; any other length throws when the client or worker is constructed.              |
+| `encryption.keyId`          | `string`                     | A name for the key, stored unencrypted beside each payload. Needed to rotate the key later; never derive it from the key. |
+| `encryption.decryptionKeys` | `Record<string, Uint8Array>` | Keys used only for reading, by key id. Nothing is encrypted with them.                                                    |
+| `compression`               | `'gzip'`                     | Compresses every payload. With `encryption` too, a payload is compressed first and then encrypted.                        |
+
+**What is encrypted:** workflow inputs and results, task inputs and results,
+step results, event payloads, query and update arguments and answers, child
+workflow inputs and results, heartbeat details, actor operation arguments and
+results, and actor state.
+
+**What is not encrypted:** workflow, task, event, query, update and actor
+names; workflow, run and actor ids; task queues; labels; annotations; headers;
+and error messages and stack traces. The engine needs these to route and show
+work, so keep secrets out of them. In particular, do not put a secret in an
+error message or in a workflow id.
+
+**Every party needs the same key.** A client and every worker that exchange
+payloads must be given the same `encryption` and `compression` settings. A
+worker with a different key, or with none, cannot read what it is handed: it
+logs an error and gives the workflow back to the engine, so the workflow stays
+waiting rather than failing, and runs once a worker with the right key picks
+it up. A task or actor operation whose input cannot be read is failed with the
+reason. A client with the wrong key, or none, gets an error when it reads a
+result or an answer. No handler ever runs on a payload it could not decrypt.
+
+**Rotating the key.** Name the key from the start (`keyId`). To rotate, give
+every worker and client the new key as `key` with a new `keyId`, and the old
+one under its id in `decryptionKeys`:
+
+```typescript
+encryption: {
+  key: newKey,
+  keyId: '2027-01',
+  decryptionKeys: { '2026-11': oldKey },
+}
+```
+
+Payloads written before the rotation stay readable, and everything new is
+written with the new key. Deploy the new key as a decryption key everywhere
+before any process starts encrypting with it. A payload encrypted without a
+`keyId` can only be read by a process whose `key` is that key.
+
+Payloads written before encryption was turned on stay readable after it is.
+Encrypted values cannot be searched or shown by the engine. The key is never
+logged, and is left out when a client, a worker or its configuration is
+printed.
+
+</details>
+
+<details>
 <summary><b>Time and randomness</b>: the replay-safe way</summary>
 
 <br />

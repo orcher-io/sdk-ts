@@ -8,6 +8,13 @@
  */
 
 import type { RetryPolicy } from '../workflow/types';
+import type {
+  EncryptionOptions,
+  HostEncryptionConfig,
+  PayloadCompression,
+} from './payload-options';
+
+export type { EncryptionOptions, PayloadCompression } from './payload-options';
 
 /**
  * Native client handle (opaque pointer to Rust ClientHandle)
@@ -56,6 +63,10 @@ export interface HostConfig {
   shutdownGraceMs?: number;
   sdkName?: string;
   sdkVersion?: string;
+  /** `gzip`, to compress every payload. */
+  compression?: PayloadCompression;
+  /** The keys every payload is encrypted and decrypted with, as base64. */
+  encryption?: HostEncryptionConfig;
 }
 
 /** What a worker runs, as `hostStart` reads it. */
@@ -130,6 +141,32 @@ export interface ClientConfig {
    * whatever this says.
    */
   timeout?: number;
+
+  /**
+   * Encrypt every payload with AES-256-GCM before it leaves this process, and
+   * decrypt every payload it receives: workflow inputs and results, task
+   * inputs and results, step results, event payloads, query and update
+   * arguments and answers, child workflows, actor operations and actor state.
+   * The engine never holds the key and stores ciphertext only.
+   *
+   * `key` must be exactly 32 bytes; any other length throws when the client
+   * is constructed. A client and every worker that exchange payloads need the
+   * same key: a worker with a different key, or none, cannot run what was
+   * started with this one, and leaves the workflow waiting rather than
+   * failing it.
+   *
+   * Not encrypted: workflow, task, event, query and actor names, ids, task
+   * queues, labels, annotations, headers, and error messages and stack
+   * traces.
+   */
+  encryption?: EncryptionOptions;
+
+  /**
+   * Compress every payload with gzip before it leaves this process. With
+   * `encryption` too, a payload is compressed first and then encrypted. A
+   * client and every worker that exchange payloads need the same setting.
+   */
+  compression?: PayloadCompression;
 }
 
 /**
