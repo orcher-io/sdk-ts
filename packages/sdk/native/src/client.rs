@@ -19,6 +19,7 @@ use orcher_sdk_core::client::{ConnectOptions, Connection, ProtocolClient};
 use orcher_sdk_core::TlsConfig;
 
 use crate::runtime::Runtime;
+use crate::seal::SealSettings;
 use crate::types::{get_optional_bool_property, get_optional_string_property, get_string_property};
 
 /// The client connection JavaScript holds, boxed.
@@ -39,7 +40,7 @@ impl Finalize for ClientHandleType {}
 // ============================================================================
 
 /// Client configuration read from the JavaScript config object.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[allow(dead_code)]
 pub struct ClientConfig {
     pub server_url: String,
@@ -51,13 +52,17 @@ pub struct ClientConfig {
     /// The longest any one call to the engine may take; sdk-core's default
     /// when unset.
     pub timeout: Option<Duration>,
+    /// The `compression` and `encryption` options; their debug output holds
+    /// no key.
+    pub seal: SealSettings,
 }
 
 impl ClientConfig {
     /// Read the config from a JavaScript object.
     ///
-    /// Throws when `serverUrl` or `namespace` is missing, or the `tls` block is invalid.
-    pub fn from_js<'a, C: Context<'a>>(cx: &mut C, obj: Handle<JsObject>) -> NeonResult<Self> {
+    /// Throws when `serverUrl` or `namespace` is missing, or the `tls` block
+    /// or the `encryption` block is invalid.
+    pub fn from_js<'a, C: Context<'a>>(cx: &mut C, obj: Handle<'a, JsObject>) -> NeonResult<Self> {
         let server_url = get_string_property(cx, obj, "serverUrl")?;
         let namespace = get_string_property(cx, obj, "namespace")?;
         let identity = get_optional_string_property(cx, obj, "identity")?;
@@ -79,6 +84,8 @@ impl ClientConfig {
             Err(_) => None,
         };
 
+        let seal = SealSettings::from_js(cx, obj)?;
+
         Ok(Self {
             server_url,
             namespace,
@@ -86,6 +93,7 @@ impl ClientConfig {
             api_key,
             tls_config,
             timeout,
+            seal,
         })
     }
 }
@@ -167,7 +175,9 @@ fn parse_tls_config<'a, C: Context<'a>>(
 ///
 /// With a `tls` block the connection is made now, so a certificate the server
 /// refuses fails here; without, on the first call. `apiKey`, when given, is
-/// sent on every call; `timeout` bounds each call.
+/// sent on every call; `timeout` bounds each call. With `encryption` or
+/// `compression`, every payload is encoded on its way out and decoded on its
+/// way in; a key of the wrong length throws here.
 pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let config_obj = cx.argument::<JsObject>(0)?;
     let config = ClientConfig::from_js(&mut cx, config_obj)?;
@@ -179,6 +189,13 @@ pub fn connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let has_tls = config.tls_config.is_some();
     if let Some(tls) = config.tls_config {
         options = options.with_tls(tls);
+    }
+    // Every payload this client sends is sealed and every one it receives
+    // opened, by sdk-core, when the configuration asks for it.
+    match config.seal.into_seal() {
+        Ok(Some(seal)) => options = options.with_payload_seal(seal),
+        Ok(None) => {}
+        Err(message) => return cx.throw_error(message),
     }
     let timeout = config.timeout;
 

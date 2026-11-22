@@ -3,8 +3,8 @@
 The Rust crate behind the Orcher TypeScript SDK (`@orcher/sdk`). It is a
 [Neon](https://neon-rs.dev/) N-API binding over
 [`orcher-sdk-host`](https://github.com/orcher-io/sdk-core) (the worker) and
-[`orcher-sdk-core`](https://github.com/orcher-io/sdk-core) (the client, the
-codecs and the kernel protocol), built as a `cdylib` named `orcher_core` and
+[`orcher-sdk-core`](https://github.com/orcher-io/sdk-core) (the client, payload
+sealing and the kernel protocol), built as a `cdylib` named `orcher_core` and
 loaded by the TypeScript package as `orcher_core.node`.
 
 The worker host is the worker's plumbing, shared with the Rust and Python SDKs:
@@ -70,7 +70,8 @@ src/
 ├── host.rs        Worker: the worker host's start, pulls and completions (protobuf in and
 │                  out), task heartbeats and cancellation, actor state, shutdown
 ├── kernel.rs      The kernel protocol for replaying recorded activations without an engine
-├── codec.rs       Gzip, encryption and chained payload codecs over raw buffers
+├── seal.rs        The `compression` and `encryption` options as the payload seal sdk-core
+│                  applies to every payload sent and received
 ├── runtime.rs     Global Tokio runtime, future-to-promise bridge, JS/JSON value conversion
 ├── error_code.rs  Tags errors with a `[CODE]` prefix that the TypeScript side maps to
 │                  its error classes

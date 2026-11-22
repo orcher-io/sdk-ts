@@ -5,7 +5,7 @@
 //!     ↓
 //! Neon (this crate, loaded as orcher_core.node)
 //!     ↓
-//! orcher-sdk-host (the worker)    orcher-sdk-core (the client, codecs, the kernel)
+//! orcher-sdk-host (the worker)    orcher-sdk-core (the client, payload sealing, the kernel)
 //! ```
 //!
 //! The functions exported in `main` are the whole JavaScript surface of the binding.
@@ -21,12 +21,12 @@ use std::sync::Mutex;
 use tracing_subscriber::{fmt, EnvFilter};
 
 mod client;
-mod codec;
 mod error;
 mod error_code;
 mod host;
 mod kernel;
 mod runtime;
+mod seal;
 mod types;
 mod utils;
 
@@ -110,24 +110,6 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("hostActorStateKeys", host::host_actor_state_keys)?;
     cx.export_function("hostShutdown", host::host_shutdown)?;
     cx.export_function("hostWireMetrics", host::host_wire_metrics)?;
-
-    // Payload codecs
-    cx.export_function("codecGzipCreate", codec::codec_gzip_create)?;
-    cx.export_function("codecGzipEncode", codec::codec_gzip_encode)?;
-    cx.export_function("codecGzipDecode", codec::codec_gzip_decode)?;
-    cx.export_function("codecEncryptionCreate", codec::codec_encryption_create)?;
-    cx.export_function(
-        "codecEncryptionGenerateKey",
-        codec::codec_encryption_generate_key,
-    )?;
-    cx.export_function("codecEncryptionEncode", codec::codec_encryption_encode)?;
-    cx.export_function("codecEncryptionDecode", codec::codec_encryption_decode)?;
-    cx.export_function("codecChainCreate", codec::codec_chain_create)?;
-    cx.export_function("codecChainAddGzip", codec::codec_chain_add_gzip)?;
-    cx.export_function("codecChainAddEncryption", codec::codec_chain_add_encryption)?;
-    cx.export_function("codecChainEncode", codec::codec_chain_encode)?;
-    cx.export_function("codecChainDecode", codec::codec_chain_decode)?;
-    cx.export_function("codecChainLen", codec::codec_chain_len)?;
 
     // The kernel protocol, for replaying recorded activations without an
     // engine (contract/replay-check.ts).

@@ -25,6 +25,8 @@ export {
 
 export type {
   ClientConfig,
+  EncryptionOptions,
+  PayloadCompression,
   ServiceConfig,
   ExecutionRequest,
   ExecutionResult,

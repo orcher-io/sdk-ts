@@ -12,6 +12,7 @@ import * as os from 'os';
 
 import { Client } from '../client/client';
 import { tlsForUrl } from '../core/tls';
+import { PayloadEncryption, checkedCompression } from '../core/payload-options';
 import { durationToMillis } from '../workflow/types';
 import { toPayload } from '../core/bridge/payload';
 import { getNativeModule } from '../core/native';
@@ -155,12 +156,19 @@ export class Worker {
       | 'organizationId'
       | 'apiKey'
       | 'tls'
+      | 'encryption'
+      | 'compression'
       | 'heartbeatInterval'
     >
   > &
-    Pick<WorkerOptions, 'versionId' | 'binaryChecksum' | 'organizationId' | 'apiKey' | 'tls'> & {
+    Pick<
+      WorkerOptions,
+      'versionId' | 'binaryChecksum' | 'organizationId' | 'apiKey' | 'tls' | 'compression'
+    > & {
       workflows: WorkflowDefinition[];
       tasks: TaskDefinition[];
+      /** The encryption keys, checked, in a form that is not printed. */
+      encryption?: PayloadEncryption;
     };
   private readonly eventEmitter: EventEmitter;
   private readonly logger: Logger;
@@ -211,7 +219,8 @@ export class Worker {
    * Create a worker. It connects to nothing until `run()`.
    *
    * @param options - Worker configuration options
-   * @throws {WorkerError} If a required option is missing or invalid.
+   * @throws {WorkerError} If a required option is missing or invalid, which
+   *   includes an `encryption.key` that is not exactly 32 bytes.
    *
    * @example
    * ```typescript
@@ -239,6 +248,8 @@ export class Worker {
       ? this.normalizeTaskEntries(options.tasks)
       : this.convertDITasksToDefinitions();
 
+    const invalidOption = (message: string) => new WorkerError(message);
+
     this.options = {
       serverUrl: options.serverUrl,
       namespace: options.namespace,
@@ -260,6 +271,8 @@ export class Worker {
       organizationId: options.organizationId,
       apiKey: options.apiKey,
       tls: tlsForUrl(options.serverUrl, options.tls),
+      compression: checkedCompression(options.compression, invalidOption),
+      encryption: PayloadEncryption.from(options.encryption, invalidOption),
       maxConcurrentActorOperations: options.maxConcurrentActorOperations ?? 100,
       actorPollerCount: options.actorPollerCount ?? 2,
     };
@@ -501,6 +514,10 @@ export class Worker {
         // it carries the same credential and the same TLS setting.
         apiKey: this.options.apiKey,
         tls: this.options.tls,
+        // And the same payload settings: what it sends, the worker host and
+        // every other worker and client must be able to read.
+        compression: this.options.compression,
+        encryption: this.options.encryption?.toClientConfig(),
       };
 
       this.client = new Client(clientConfig);
@@ -819,6 +836,8 @@ export class Worker {
       shutdownGraceMs: durationToMillis(o.shutdownGraceTime),
       sdkName: 'typescript',
       sdkVersion: SDK_VERSION,
+      compression: o.compression,
+      encryption: o.encryption?.toHostConfig(),
     };
   }
 

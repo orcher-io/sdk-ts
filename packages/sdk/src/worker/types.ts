@@ -202,6 +202,32 @@ export interface WorkerOptions {
   tls?: import('../core/types').TlsConfig;
 
   /**
+   * Encrypt every payload with AES-256-GCM before it leaves this process, and
+   * decrypt every payload it receives: workflow inputs and results, task
+   * inputs and results, step results, event payloads, query and update
+   * arguments and answers, child workflows, actor operations and actor state.
+   * The engine never holds the key and stores ciphertext only.
+   *
+   * `key` must be exactly 32 bytes; any other length throws when the worker
+   * is constructed. A client and every worker that exchange payloads need the
+   * same key: a worker with a different key, or none, cannot run what was
+   * started with this one, and leaves the workflow waiting rather than
+   * failing it.
+   *
+   * Not encrypted: workflow, task, event, query and actor names, ids, task
+   * queues, labels, annotations, headers, and error messages and stack
+   * traces.
+   */
+  encryption?: import('../core/types').EncryptionOptions;
+
+  /**
+   * Compress every payload with gzip before it leaves this process. With
+   * `encryption` too, a payload is compressed first and then encrypted. A
+   * client and every worker that exchange payloads need the same setting.
+   */
+  compression?: import('../core/types').PayloadCompression;
+
+  /**
    * Has no effect, and will be removed.
    *
    * The worker heartbeats every running task on its own, from the moment the

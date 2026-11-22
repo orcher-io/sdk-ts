@@ -251,6 +251,8 @@ export {
 
 export type {
   ClientConfig,
+  EncryptionOptions,
+  PayloadCompression,
   ServiceConfig as WorkerConfig,
   WorkflowStartOptions,
   WorkflowHandleOptions,
