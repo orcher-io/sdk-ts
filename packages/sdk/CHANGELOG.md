@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.22](https://github.com/orcher-io/sdk-ts/compare/v0.5.21...v0.5.22) (2026-11-28)
+
+
+### Bug Fixes
+
+* export the child and restart-fresh option types the calls take ([#91](https://github.com/orcher-io/sdk-ts/issues/91)) ([1dede3e](https://github.com/orcher-io/sdk-ts/commit/1dede3e446c4c72f4bfaea1dad82693ddc7c17c5)), closes [#11](https://github.com/orcher-io/sdk-ts/issues/11)
+
 ## [0.5.21](https://github.com/orcher-io/sdk-ts/compare/v0.5.20...v0.5.21) (2026-11-22)
 
 
