@@ -22,7 +22,7 @@ import { QueryManager, QueryHandler, QueryOptions, QueryHelpers } from './query'
 import { ChildWorkflowHandle, ChildWorkflowFailedError } from './child-handle';
 import type { TaskReference } from '../di/types';
 import { Duration, ParentClosePolicy } from './types';
-import type { RetryPolicy } from './types';
+import type { RetryPolicy, ChildWorkflowOptions, RestartFreshOptions } from './types';
 import { WorkflowError, TASK_FAILED_SENTINEL_KEY } from '../errors';
 
 /**
@@ -198,28 +198,9 @@ export type { RetryPolicy };
 // package root exported could not be passed to the context's child workflow
 // calls.
 export { ParentClosePolicy };
-
-/**
- * Child workflow options
- */
-export interface ChildWorkflowOptions {
-  /** Workflow ID for the child workflow (generated if not provided) */
-  workflowId?: string;
-  /** Task queue for the child workflow (inherits from parent if not provided) */
-  taskQueue?: string;
-  /** Execution timeout, as a `Duration` */
-  timeout?: Duration;
-  /** Policy for what happens to child when parent closes */
-  parentClosePolicy?: ParentClosePolicy;
-  /**
-   * How the child is retried when a run of it fails, with the same meaning as
-   * a workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
-   * retries without limit, and leaving it out allows 3. Intervals are in
-   * milliseconds. When unset, no policy is sent: a failed child is not
-   * retried and its failure reaches the parent.
-   */
-  retryPolicy?: Partial<RetryPolicy>;
-}
+// The option types are defined beside it, for the same reason: the package
+// root exported its own copies, which did not match what these calls take.
+export type { ChildWorkflowOptions, RestartFreshOptions };
 
 /**
  * Restart fresh command
@@ -238,50 +219,6 @@ export interface RestartFreshCommand extends WorkflowCommand {
   /** New execution timeout, in milliseconds */
   timeout?: number;
   /** Retry policy for the new execution; unset keeps the current one */
-  retryPolicy?: Partial<RetryPolicy>;
-}
-
-/**
- * Options for restarting a workflow with a fresh execution history.
- *
- * Restart fresh is useful to:
- * - Prevent unbounded history growth in long-running workflows
- * - Periodically refresh code versions
- * - Implement entity workflows that run forever
- * - Checkpoint state and start fresh
- */
-export interface RestartFreshOptions {
-  /**
-   * New workflow type (optional)
-   *
-   * If provided, the restarted workflow will execute with this type.
-   * Useful for migrating to a new workflow version.
-   */
-  workflowType?: string;
-
-  /**
-   * New task queue (optional)
-   *
-   * If provided, the restarted workflow will be routed to this queue.
-   * Useful for moving workflows to different worker pools.
-   */
-  taskQueue?: string;
-
-  /**
-   * New execution timeout (optional).
-   *
-   * If provided, the restarted workflow will use this timeout: a `Duration`,
-   * or a number of milliseconds.
-   */
-  timeout?: DurationInput;
-
-  /**
-   * Retry policy for the new execution (optional), with the same meaning as a
-   * workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
-   * retries without limit, and leaving it out allows 3. Intervals are in
-   * milliseconds. When unset, no policy is sent and the new execution keeps
-   * the current one.
-   */
   retryPolicy?: Partial<RetryPolicy>;
 }
 
@@ -1051,7 +988,7 @@ export class WorkflowContext {
         workflowType,
         taskQueue,
         input,
-        timeout: options?.timeout?.toMilliseconds(),
+        timeout: childTimeoutMillis(options),
         parentClosePolicy,
         retryPolicy: options?.retryPolicy,
       };
@@ -1160,7 +1097,7 @@ export class WorkflowContext {
         workflowType,
         taskQueue,
         input,
-        timeout: options?.timeout?.toMilliseconds(),
+        timeout: childTimeoutMillis(options),
         parentClosePolicy,
         retryPolicy: options?.retryPolicy,
       };
@@ -2294,4 +2231,13 @@ function throwIfTaskFailed(taskType: string, cached: unknown, fallbackMessage: s
       failureCode: c.code ?? 'unspecified',
     });
   }
+}
+
+/**
+ * A child's execution timeout in milliseconds: `timeout` when set, else the
+ * deprecated `executionTimeout`.
+ */
+function childTimeoutMillis(options?: ChildWorkflowOptions): number | undefined {
+  if (options?.timeout !== undefined) return durationToMillis(options.timeout);
+  return options?.executionTimeout;
 }

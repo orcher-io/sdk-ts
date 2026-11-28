@@ -229,29 +229,29 @@ export interface RetryPolicy {
 export type TaskRetryPolicy = Partial<RetryPolicy>;
 
 /**
- * Options for starting a child workflow.
+ * Options for `ctx.executeChildWorkflow()` and `ctx.startChildWorkflow()`.
+ *
+ * The one definition: the package root, `@orcher/sdk/workflow` and the
+ * context all export this type. It is also exported as
+ * `ContextChildWorkflowOptions`, the same type under an older name.
  */
 export interface ChildWorkflowOptions {
-  /**
-   * Workflow ID for the child workflow
-   */
+  /** Workflow ID for the child workflow (generated if not provided) */
   workflowId?: string;
-
-  /**
-   * Task queue for the child workflow
-   */
+  /** Task queue for the child workflow (inherits from parent if not provided) */
   taskQueue?: string;
-
+  /** Execution timeout: a `Duration`, or a number of milliseconds */
+  timeout?: DurationInput;
   /**
-   * Execution timeout for the child workflow
+   * Execution timeout in milliseconds.
+   *
+   * @deprecated Use `timeout`, which also takes a `Duration`. This is the name
+   * an older copy of this type used; it is still honoured when `timeout` is
+   * not set.
    */
   executionTimeout?: number;
-
-  /**
-   * What happens to the child when the parent closes
-   */
+  /** What happens to the child when the parent closes */
   parentClosePolicy?: ParentClosePolicy;
-
   /**
    * How the child is retried when a run of it fails, with the same meaning as
    * a workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
@@ -296,37 +296,51 @@ export enum ParentClosePolicy {
 }
 
 /**
- * Options for restarting a workflow from scratch.
+ * Options for restarting a workflow with a fresh execution history.
+ *
+ * Restart fresh is useful to:
+ * - Prevent unbounded history growth in long-running workflows
+ * - Periodically refresh code versions
+ * - Implement entity workflows that run forever
+ * - Checkpoint state and start fresh
+ *
+ * The one definition: the package root, `@orcher/sdk/workflow` and the
+ * context all export this type. Pass the new input as the first argument of
+ * `ctx.restartFresh(input, options)`.
  */
 export interface RestartFreshOptions {
   /**
-   * New input for the restarted workflow
+   * New workflow type (optional)
+   *
+   * If provided, the restarted workflow will execute with this type.
+   * Useful for migrating to a new workflow version.
    */
-  input?: any;
+  workflowType?: string;
 
   /**
-   * Retry policy for the new execution, with the same meaning as a workflow
-   * start's `retryPolicy`: `maxAttempts` counts the first run, `0` retries
-   * without limit, and leaving it out allows 3. Intervals are in
+   * New task queue (optional)
+   *
+   * If provided, the restarted workflow will be routed to this queue.
+   * Useful for moving workflows to different worker pools.
+   */
+  taskQueue?: string;
+
+  /**
+   * New execution timeout (optional).
+   *
+   * If provided, the restarted workflow will use this timeout: a `Duration`,
+   * or a number of milliseconds.
+   */
+  timeout?: DurationInput;
+
+  /**
+   * Retry policy for the new execution (optional), with the same meaning as a
+   * workflow start's `retryPolicy`: `maxAttempts` counts the first run, `0`
+   * retries without limit, and leaving it out allows 3. Intervals are in
    * milliseconds. When unset, no policy is sent and the new execution keeps
    * the current one.
    */
   retryPolicy?: Partial<RetryPolicy>;
-
-  /**
-   * Options for the restarted workflow
-   */
-  options?: {
-    /**
-     * New task queue
-     */
-    taskQueue?: string;
-
-    /**
-     * New execution timeout
-     */
-    executionTimeout?: number;
-  };
 }
 
 /**
